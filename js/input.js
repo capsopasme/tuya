@@ -1,34 +1,27 @@
 var DJ = (globalThis.DJ = globalThis.DJ || {});
 (function () {
   'use strict';
-  const W = DJ.W;
   const clamp = DJ.clamp;
 
-  // 输入汇总：键盘 / 触屏 / 重力感应 -> axis（-1..1）和射击队列
+  // 输入汇总：重力感应（唯一的触屏/手机操控方式）/ 键盘（电脑调试用）-> axis（-1..1）；点击屏幕 -> 射击队列
   const I = (DJ.input = {
     left: false,
     right: false,
-    tilt: null, // 手机左右倾斜角（度）
+    raw: null, // 传感器最新读数（度，向右歪为正），还没收到过为 null
+    tilt: 0, // 经过时间滤波后的倾斜角
     tiltSeen: false,
-    coarse: false, // 主要输入是触屏
-    mode: 'auto', // auto | tilt | touch
-    touches: new Map(),
+    sens: 1, // 灵敏度倍数
     shots: [],
   });
 
-  // 是否使用重力感应控制
-  I.tiltActive = function () {
-    if (!I.tiltSeen) return false;
-    if (I.mode === 'tilt') return true;
-    if (I.mode === 'touch') return false;
-    return I.coarse;
-  };
+  const DEAD = 1.2; // 死区（度）
+  const FULL = 17; // 灵敏度 1 时，歪到多少度就是满速
 
-  // 直接设置倾斜角（度，向右为正）
-  I.setTilt = function (deg) {
+  // 唯一的传感器入口：读数一到就记下；第一次读数直接对齐，不做渐变
+  I.setRaw = function (deg) {
     if (deg === null || deg === undefined || isNaN(deg)) return;
-    // 轻微低通，滤掉手抖
-    I.tilt = I.tilt === null ? deg : I.tilt + (deg - I.tilt) * 0.55;
+    if (I.raw === null) I.tilt = deg;
+    I.raw = deg;
     I.tiltSeen = true;
   };
 
@@ -36,54 +29,38 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   // （Android 上手机向右歪时 x 为负；iOS 相反，由调用方传入 sign）
   I.setAccel = function (ax, sign) {
     if (ax === null || ax === undefined || isNaN(ax)) return;
-    I.setTilt((Math.asin(clamp((-ax * (sign || 1)) / 9.81, -1, 1)) * 180) / Math.PI);
+    I.setRaw((Math.asin(clamp((-ax * (sign || 1)) / 9.81, -1, 1)) * 180) / Math.PI);
   };
 
-  I.axis = function (now) {
+  // 切回应用 / 开局 / 继续游戏时：滤波值立刻对齐当前读数，不留旧姿势的“尾巴”
+  I.snapTilt = function () {
+    if (I.raw !== null) I.tilt = I.raw;
+  };
+
+  // 倾斜角 -> 速度比例：死区之外先缓后快，两端平滑（不会有突然的拐点）
+  I.response = function (deg) {
+    const full = FULL / I.sens;
+    const n = clamp((Math.abs(deg) - DEAD) / (full - DEAD), 0, 1);
+    const e = n * n * (3 - 2 * n);
+    return Math.sign(deg) * (0.55 * n + 0.45 * e);
+  };
+
+  // 每帧调用一次（dt 为帧间隔），时间常数 40ms 的一阶滤波：滤掉手抖又不拖手
+  I.axis = function (dt) {
     if (I.left !== I.right) return I.left ? -1 : 1;
-    if (I.tiltActive()) {
-      if (I.tilt === null) return 0;
-      const dead = 1.5;
-      const g = I.tilt;
-      const v = Math.abs(g) < dead ? 0 : (Math.abs(g) - dead) / 17;
-      return clamp(Math.sign(g) * v, -1, 1);
-    }
-    // 触屏：按住左 / 右半屏移动（按住超过 100ms 才算，避免点按射击时误动）
-    for (const t of I.touches.values()) {
-      if (t.steer && now - t.t0 > 100) return t.x < W / 2 ? -1 : 1;
-    }
-    return 0;
+    if (I.raw === null) return 0;
+    I.tilt += (I.raw - I.tilt) * (1 - Math.exp(-(dt || 0) / 0.04));
+    return I.response(I.tilt);
   };
 
   I.shootUp = function () {
     I.shots.push({ dx: 0, dy: -1 });
   };
-
-  // 指针按下（x,y 为逻辑坐标）
-  I.down = function (id, type, x, y, now) {
-    const steer = type === 'touch' && !I.tiltActive();
-    I.touches.set(id, { x: x, y: y, x0: x, y0: y, t0: now, steer: steer });
-    if (!steer) I.shots.push({ tx: x, ty: y });
-  };
-  I.move = function (id, x, y) {
-    const t = I.touches.get(id);
-    if (t) {
-      t.x = x;
-      t.y = y;
-    }
-  };
-  I.up = function (id, x, y, now) {
-    const t = I.touches.get(id);
-    if (!t) return;
-    I.touches.delete(id);
-    // 触屏移动模式下，快速轻点 = 射击
-    if (t.steer && now - t.t0 < 220 && Math.hypot(x - t.x0, y - t.y0) < 28) I.shots.push({ tx: x, ty: y });
-  };
-  I.clearPointers = function () {
-    I.touches.clear();
+  // 点击屏幕（x,y 为逻辑坐标）：射击，方向由游戏自动瞄准怪物，没有怪物时朝点击处
+  I.shootAt = function (x, y) {
+    I.shots.push({ tx: x, ty: y });
   };
   I.reset = function () {
-    I.touches.clear();
     I.shots.length = 0;
     I.left = I.right = false;
   };

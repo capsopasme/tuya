@@ -102,7 +102,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     white: { top: '#ffffff', bot: '#d9d9d2', line: '#8e8e86', hi: 'rgba(255,255,255,0.8)' },
   };
 
-  function platform(ctx, p) {
+  function platformBody(ctx, p) {
     const x = p.x - p.w / 2;
     const y = p.y;
     const pal = PAL[p.type];
@@ -140,6 +140,16 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     }
     ctx.restore();
     if (p.item && !p.item.used) item(ctx, p, p.item);
+  }
+
+  // 被踩到时整块平台（连同上面的道具）跟着 dip 弹簧往下沉一点再弹回来
+  function platform(ctx, p) {
+    if (p.dip) {
+      ctx.save();
+      ctx.translate(0, p.dip);
+      platformBody(ctx, p);
+      ctx.restore();
+    } else platformBody(ctx, p);
   }
 
   // ---------- 平台上的道具 ----------
@@ -239,6 +249,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   }
 
   // ---------- 主角：小橘（原创角色：圆滚滚的橘色小家伙，头顶一株小芽，正面朝前，张嘴吐墨水球）----------
+  // 全部姿态量（肚子、肚皮、手臂、拉伸、脸朝向）都由 world.js 里的弹簧/指数平滑产生，这里只负责画。
   function leaf(ctx, s, len, wid) {
     ctx.beginPath();
     ctx.moveTo(0, 0);
@@ -254,10 +265,29 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     ctx.stroke();
   }
 
-  function doodlerAt(ctx, dd, x) {
+  // 圆润的小短手：粗圆头线条 + 手尖的小圆球
+  function plumpArm(ctx, x0, y0, dx, dy, len, rad) {
+    const n = Math.hypot(dx, dy) || 1;
+    const ex = x0 + (dx / n) * len;
+    const ey = y0 + (dy / n) * len;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(ex, ey);
+    ctx.lineWidth = rad * 2 + 2;
+    ctx.strokeStyle = INK;
+    ctx.stroke();
+    ctx.lineWidth = rad * 2 - 2.2;
+    ctx.strokeStyle = '#f0733f';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(ex, ey, rad - 0.2, 0, TAU);
+    fillStroke(ctx, '#f58a4a', 1.9);
+  }
+
+  function doodlerAt(ctx, dd, x, y) {
     const st = dd.state;
     ctx.save();
-    ctx.translate(x, dd.y);
+    ctx.translate(x, y);
     if (st === 'blackhole' || st === 'abducted') {
       ctx.translate(0, -24);
       ctx.rotate(dd.spin);
@@ -268,91 +298,91 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.rotate(Math.sin(dd.spin) * 0.25);
       ctx.translate(0, 24);
     }
-    ctx.scale(dd.facing, 1);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
-    // 腿的长度：落地压缩 -> 起跳伸长 -> 顶点收起
     const vy = dd.vy;
+    // 腿的长度：落地压缩 -> 起跳伸长 -> 顶点收起（用缓动曲线，不是分段直线）
     let L;
     if (st === 'dead') L = 10;
     else if (dd.bounceT < 0.07) L = 5 + 3 * (dd.bounceT / 0.07);
     else if (vy < -150) L = Math.min(16, 8 + (dd.bounceT - 0.07) * 70);
     else if (vy < 150) L = 16 - 7 * clamp((vy + 150) / 300, 0, 1);
     else L = 9;
-    const cy = -(L + 21);
-    // 肚子果冻晃动：以身体底部为支点挤压/拉伸（belly>0 又宽又扁，<0 又窄又高）
-    const bd = clamp(dd.belly || 0, -0.8, 0.8);
-    const sxB = 1 + 0.3 * bd;
-    const syB = 1 - 0.24 * bd;
-    const pivY = cy + 20;
-    const topY = pivY - 39 * syB; // 头顶位置，芽和螺旋桨帽跟着走
+
+    // ---- 果冻身体：肚子弹簧 belly（>0 又宽又扁，<0 又窄又高）+ 空中拉伸 stretch ----
+    const bd = clamp(dd.belly || 0, -1, 1);
+    const b2 = dd.b2 === undefined ? bd : dd.b2;
+    const stretch = dd.stretch || 0;
+    const sxB = (1 + 0.5 * bd) * (1 - stretch * 0.45);
+    const syB = (1 - 0.42 * bd) * (1 + stretch * 0.6);
+    const RX = 21 * sxB; // 直接改椭圆半径而不是 ctx.scale，描边粗细才不会被拉变形
+    const RY = 20.5 * syB;
+    const pivY = -(L + 1); // 身体底部，腿从这里长出来
+    const by = pivY - RY; // 身体中心
+    const topY = by - RY;
+    const look = dd.look === undefined ? 0.5 : dd.look;
+    const pose = dd.armPose === undefined ? clamp(vy / 350, -1, 1) : dd.armPose;
     const shooting = st !== 'dead' && dd.shootT < 0.22;
-    const la = dd.facing > 0 ? dd.aim : Math.PI - dd.aim; // 本地坐标下的瞄准角
+    const aim = dd.aim === undefined ? -Math.PI / 2 : dd.aim;
+    const shootK = st === 'dead' ? 0 : dd.shootT < 0.2 ? 1 : clamp(1 - (dd.shootT - 0.2) / 0.14, 0, 1);
 
     // 喷气背包（在身体两侧偏后）
     if (st === 'jetpack') {
       const fl = 14 + Math.sin(dd.t * 60) * 5 + Math.random() * 3;
-      for (const jx of [-27, 16]) {
-        rr(ctx, jx, cy - 10, 11, 26, 4);
+      for (const jx of [-(RX + 6), RX - 5]) {
+        rr(ctx, jx, by - 10, 11, 26, 4);
         fillStroke(ctx, '#9db4c9', 2);
-        rr(ctx, jx, cy - 10, 11, 7, 3);
+        rr(ctx, jx, by - 10, 11, 7, 3);
         fillStroke(ctx, '#e8483c', 1.6);
         ctx.beginPath();
-        ctx.moveTo(jx + 1, cy + 16);
-        ctx.lineTo(jx + 5.5, cy + 16 + fl);
-        ctx.lineTo(jx + 10, cy + 16);
+        ctx.moveTo(jx + 1, by + 16);
+        ctx.lineTo(jx + 5.5, by + 16 + fl);
+        ctx.lineTo(jx + 10, by + 16);
         ctx.closePath();
         fillStroke(ctx, '#ffb02e', 1.4);
         ctx.beginPath();
-        ctx.moveTo(jx + 3, cy + 16);
-        ctx.lineTo(jx + 5.5, cy + 16 + fl * 0.55);
-        ctx.lineTo(jx + 8, cy + 16);
+        ctx.moveTo(jx + 3, by + 16);
+        ctx.lineTo(jx + 5.5, by + 16 + fl * 0.55);
+        ctx.lineTo(jx + 8, by + 16);
         ctx.closePath();
         ctx.fillStyle = '#fff29a';
         ctx.fill();
       }
     }
 
-    // 腿
-    for (const lx of [-8, 8]) {
-      rr(ctx, lx - 3.5, -L - 4, 7, L + 2, 3);
+    // 腿：短而圆润的小粗腿 + 大脚丫
+    for (const s of [-1, 1]) {
+      const lx = s * 8 * sxB;
+      rr(ctx, lx - 4.9, pivY - 3, 9.8, L + 2.2, 4.7);
       fillStroke(ctx, '#e3683f', 2);
       ctx.beginPath();
-      ctx.ellipse(lx + (lx > 0 ? 1.5 : -1.5), -2.4, 7.5, 3.3, 0, 0, TAU);
+      ctx.ellipse(lx + s * 1.6, -2.7, 8.6, 3.9, 0, 0, TAU);
       fillStroke(ctx, '#c9502f', 2);
     }
 
-    // 小手：上升时举高，下落时放低，射击时朝瞄准方向
-    let ax = 0.75;
-    let ay = vy < -100 ? -0.75 : vy > 150 ? 0.55 : -0.1;
-    if (st === 'dead') ay = -0.9;
+    // 小手：姿态由 armPose 平滑决定（高举 -> 平伸 -> 下垂），随肚皮晃动甩一甩；射击时那一侧的手指向瞄准方向
+    const armSide = Math.cos(aim) >= 0 ? 1 : -1;
     for (const s of [-1, 1]) {
-      let dx = s * ax;
-      let dy = ay;
-      if (shooting && s === 1) {
-        dx = Math.cos(la);
-        dy = Math.sin(la);
+      const sx0 = s * (RX - 4);
+      const sy0 = by + 3 * syB;
+      let th = lerp(-0.95, 0.85, (pose + 1) / 2) - b2 * 0.55;
+      let dx = s * Math.cos(th);
+      let dy = Math.sin(th);
+      let len = 11;
+      if (shooting && s === armSide) {
+        dx = lerp(dx, Math.cos(aim), shootK);
+        dy = lerp(dy, Math.sin(aim), shootK);
+        len = 13;
       }
-      const n = Math.hypot(dx, dy);
-      const sx0 = s * 16 * sxB;
-      const sy0 = pivY - 16 * syB;
-      ctx.beginPath();
-      ctx.moveTo(sx0, sy0);
-      ctx.lineTo(sx0 + (dx / n) * 10, sy0 + (dy / n) * 10);
-      ctx.lineWidth = 8.6;
-      ctx.strokeStyle = INK;
-      ctx.stroke();
-      ctx.lineWidth = 4.8;
-      ctx.strokeStyle = '#f0733f';
-      ctx.stroke();
+      plumpArm(ctx, sx0, sy0, dx, dy, len, 5.6);
     }
 
-    // 头顶的小芽（螺旋桨帽出现时收起来）
+    // 头顶的小芽（螺旋桨帽出现时收起来）：随速度和肚子晃动飘
     if (st !== 'propeller') {
       ctx.save();
-      ctx.translate(0, topY);
-      const sway = Math.sin(dd.t * 7) * 0.1 + clamp(vy / 1600, -0.5, 0.5);
+      ctx.translate(0, topY + 1);
+      const sway = Math.sin(dd.t * 7) * 0.1 + clamp(vy / 1600, -0.5, 0.5) - b2 * 0.16;
       ctx.rotate(sway);
       ctx.beginPath();
       ctx.moveTo(0, 2);
@@ -361,102 +391,102 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.strokeStyle = INK;
       ctx.stroke();
       ctx.translate(0, -8);
+      const flap = clamp(vy / 1800, -0.4, 0.4) + b2 * 0.12;
       ctx.save();
-      ctx.rotate(-0.25 - clamp(vy / 1800, -0.4, 0.4));
+      ctx.rotate(-0.25 - flap);
       leaf(ctx, -1, 13, 8);
       ctx.restore();
       ctx.save();
-      ctx.rotate(0.25 + clamp(vy / 1800, -0.4, 0.4));
+      ctx.rotate(0.25 + flap);
       leaf(ctx, 1, 13, 8);
       ctx.restore();
       ctx.restore();
     }
 
-    // 身体（整体随肚子晃动挤压）
-    ctx.save();
-    ctx.translate(0, pivY);
-    ctx.scale(sxB, syB);
-    ctx.translate(0, -pivY);
-    const bg = ctx.createRadialGradient(-6, cy - 9, 3, 0, cy, 28);
+    // 身体
+    const bg = ctx.createRadialGradient(-6 * sxB, by - 9 * syB, 3, 0, by, 28 * Math.max(sxB, syB));
     bg.addColorStop(0, '#ffc98a');
     bg.addColorStop(1, '#f06b3d');
     ctx.beginPath();
-    ctx.ellipse(0, cy, 21, 20.5, 0, 0, TAU);
+    ctx.ellipse(0, by, RX, RY, 0, 0, TAU);
     fillStroke(ctx, bg, 2.3);
-    // 肚皮
+    // 肚皮：挂在第二层弹簧上，比身体晃得更晚、更大，叠出波浪感
     ctx.beginPath();
-    ctx.ellipse(0, cy + 8 + bd * 4, 12.5 + bd * 3, 9.5 - bd * 1.5, 0, 0, TAU); // 肚皮比身体晃得更多一点
-    ctx.fillStyle = 'rgba(255,238,200,0.8)';
+    ctx.ellipse(0, by + 8 * syB + b2 * 6.5, 12.5 * sxB * (1 + b2 * 0.28), Math.max(3, 9.5 * syB * (1 - b2 * 0.22)), 0, 0, TAU);
+    ctx.fillStyle = 'rgba(255,238,200,0.82)';
     ctx.fill();
 
-    // 脸（略微偏向朝向的一侧）
-    const f = 3;
-    const ex = [-7 + f, 7 + f];
-    const ey = cy - 5;
-    let px = 1.4;
-    let py = vy < -100 ? -1.4 : vy > 150 ? 1 : 0;
-    if (shooting) {
-      px = Math.cos(la) * 2.2;
-      py = Math.sin(la) * 2.2;
+    // 脸：随朝向做视差（脸比身体偏得更多）
+    const f = 3.4 * look;
+    const P = (u, v) => [u * sxB, by + v * syB];
+    const re = clamp(5.8 + (sxB - 1) * 1.2, 5, 7);
+    const eyes = [P(-7 + f, -5), P(7 + f, -5)];
+    let px = look * 1.6;
+    let py = pose * 1.2;
+    if (shootK > 0) {
+      px = lerp(px, Math.cos(aim) * 2.2, shootK);
+      py = lerp(py, Math.sin(aim) * 2.2, shootK);
     }
-    for (const e of ex) {
+    for (const e of eyes) {
       if (st === 'dead') {
         ctx.beginPath();
-        ctx.moveTo(e - 3, ey - 3);
-        ctx.lineTo(e + 3, ey + 3);
-        ctx.moveTo(e + 3, ey - 3);
-        ctx.lineTo(e - 3, ey + 3);
+        ctx.moveTo(e[0] - 3, e[1] - 3);
+        ctx.lineTo(e[0] + 3, e[1] + 3);
+        ctx.moveTo(e[0] + 3, e[1] - 3);
+        ctx.lineTo(e[0] - 3, e[1] + 3);
         ctx.lineWidth = 2;
         ctx.strokeStyle = INK;
         ctx.stroke();
       } else {
         ctx.beginPath();
-        ctx.arc(e, ey, 5.8, 0, TAU);
+        ctx.arc(e[0], e[1], re, 0, TAU);
         fillStroke(ctx, '#fff', 1.7);
         ctx.beginPath();
-        ctx.arc(e + px, ey + py, 2.8, 0, TAU);
+        ctx.arc(e[0] + px, e[1] + py, 2.8, 0, TAU);
         ctx.fillStyle = INK;
         ctx.fill();
       }
     }
     ctx.fillStyle = 'rgba(255,90,90,0.38)';
     for (const bx of [-13 + f, 13 + f]) {
+      const q = P(bx, 3.5);
       ctx.beginPath();
-      ctx.ellipse(bx, cy + 3.5, 3.4, 2.3, 0, 0, TAU);
+      ctx.ellipse(q[0], q[1], 3.4, 2.3, 0, 0, TAU);
       ctx.fill();
     }
     // 嘴：平时微笑，射击时张成圆口，撞怪时歪嘴
-    const mx = f + 0.5;
-    const my = cy + 7;
+    const mq = P(f + 0.5, 7);
     if (st === 'dead') {
       ctx.beginPath();
-      ctx.moveTo(mx - 4, my + 1);
-      ctx.quadraticCurveTo(mx - 1.5, my - 2, mx, my + 1);
-      ctx.quadraticCurveTo(mx + 1.5, my + 4, mx + 4, my);
+      ctx.moveTo(mq[0] - 4, mq[1] + 1);
+      ctx.quadraticCurveTo(mq[0] - 1.5, mq[1] - 2, mq[0], mq[1] + 1);
+      ctx.quadraticCurveTo(mq[0] + 1.5, mq[1] + 4, mq[0] + 4, mq[1]);
       ctx.lineWidth = 1.9;
       ctx.strokeStyle = INK;
       ctx.stroke();
-    } else if (shooting) {
+    } else if (shootK > 0.05) {
+      const ox = Math.cos(aim) * 1.5;
+      const oy = Math.sin(aim) * 1.5;
       ctx.beginPath();
-      ctx.ellipse(mx + Math.cos(la) * 1.5, my - 1 + Math.sin(la) * 1.5, 4.4, 5, 0, 0, TAU);
+      ctx.ellipse(mq[0] + ox, mq[1] - 1 + oy, 4.4 * shootK + 1.2, 5 * shootK + 0.8, 0, 0, TAU);
       fillStroke(ctx, INK, 1.4);
-      ctx.beginPath();
-      ctx.ellipse(mx + Math.cos(la) * 1.5, my + 1 + Math.sin(la) * 1.5, 2.6, 2, 0, 0, TAU);
-      ctx.fillStyle = '#ef6f7e';
-      ctx.fill();
+      if (shootK > 0.5) {
+        ctx.beginPath();
+        ctx.ellipse(mq[0] + ox, mq[1] + 1 + oy, 2.6, 2, 0, 0, TAU);
+        ctx.fillStyle = '#ef6f7e';
+        ctx.fill();
+      }
     } else {
       ctx.beginPath();
-      ctx.arc(mx, my - 3, 4.6, 0.2 * Math.PI, 0.8 * Math.PI);
+      ctx.arc(mq[0], mq[1] - 3, 4.6, 0.2 * Math.PI, 0.8 * Math.PI);
       ctx.lineWidth = 1.9;
       ctx.strokeStyle = INK;
       ctx.stroke();
     }
 
-    ctx.restore();
-
     // 螺旋桨帽
     if (st === 'propeller') {
-      const hy = topY;
+      const hy = topY + 1.5;
       ctx.beginPath();
       ctx.arc(0, hy, 11, Math.PI, TAU);
       ctx.closePath();
@@ -479,22 +509,33 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     if (st === 'dead') {
       for (let i = 0; i < 3; i++) {
         const a = dd.t * 6 + (i * TAU) / 3;
-        star(ctx, Math.cos(a) * 17, cy - 26 + Math.sin(a) * 5, 6);
+        star(ctx, Math.cos(a) * 17, topY - 6 + Math.sin(a) * 5, 6);
         fillStroke(ctx, '#ffd93b', 1.3);
       }
     }
     ctx.restore();
   }
 
-  function doodler(ctx, dd) {
+  // 两个固定步长之间的渲染插值：prev -> cur 按 a（0..1）混合；跨屏环绕等大跳变不插值
+  function ix(prev, cur, a) {
+    if (prev === undefined || Math.abs(cur - prev) > 100) return cur;
+    return prev + (cur - prev) * a;
+  }
+  DJ.ix = ix;
+
+  function doodler(ctx, dd, a) {
     if (dd.state === 'gone') return;
-    doodlerAt(ctx, dd, dd.x);
+    const x = ix(dd.px, dd.x, a);
+    const y = ix(dd.py, dd.y, a);
+    doodlerAt(ctx, dd, x, y);
     if (dd.state !== 'blackhole' && dd.state !== 'abducted') {
-      if (dd.x < 36) doodlerAt(ctx, dd, dd.x + W);
-      else if (dd.x > W - 36) doodlerAt(ctx, dd, dd.x - W);
+      if (x < 36) doodlerAt(ctx, dd, x + W, y);
+      else if (x > W - 36) doodlerAt(ctx, dd, x - W, y);
     }
   }
-  DJ.drawDoodler = doodler;
+  DJ.drawDoodler = function (ctx, dd) {
+    doodler(ctx, dd, 1);
+  };
 
   // ---------- 怪物 ----------
   function eyeAt(ctx, x, y, r, look) {
@@ -710,17 +751,65 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   }
   DJ.drawHud = hud;
 
+  // ---------- 特效：落地尘土、弹簧冲击环、高速时的速度线 ----------
+  function effects(ctx, list) {
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      const al = clamp(f.life / f.max, 0, 1);
+      if (f.k === 'puff') {
+        const r = f.r * (1 + (1 - al) * 1.3);
+        ctx.globalAlpha = al * 0.7;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y - r * 0.4, r, 0, TAU);
+        ctx.fillStyle = '#fffdf3';
+        ctx.fill();
+        ctx.lineWidth = 1.3;
+        ctx.strokeStyle = 'rgba(95,110,100,0.55)';
+        ctx.stroke();
+      } else {
+        ctx.globalAlpha = al * 0.6;
+        ctx.beginPath();
+        ctx.ellipse(f.x, f.y - 2, f.r * 1.6, f.r * 0.45, 0, 0, TAU);
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = 'rgba(70,120,100,0.8)';
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function speedLines(ctx, dd, x, y) {
+    const k = clamp((-dd.vy - 650) / 450, 0, 1);
+    if (k <= 0 || dd.state === 'dead') return;
+    const t = (DJ.clock || 0) * 1100;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 7; i++) {
+      const lx = x + (i - 3) * 13 + Math.sin(i * 12.9) * 4;
+      const len = 26 + ((i * 37) % 22);
+      const off = (t + i * 53) % 70;
+      ctx.beginPath();
+      ctx.moveTo(lx, y + 4 + off);
+      ctx.lineTo(lx, y + 4 + off + len);
+      ctx.strokeStyle = 'rgba(70,110,110,' + (0.3 * k * (1 - off / 70)).toFixed(3) + ')';
+      ctx.stroke();
+    }
+  }
+
   // ---------- 整个场景 ----------
-  DJ.drawScene = function (ctx, g) {
+  // alpha：上一个物理步到当前物理步之间的插值比例（0..1），让画面在任何刷新率下都顺
+  DJ.drawScene = function (ctx, g, alpha) {
     const v = DJ.view;
-    background(ctx, g.camY);
+    const a = alpha === undefined ? 1 : clamp(alpha, 0, 1);
+    const cam = ix(g.pCam, g.camY, a);
+    background(ctx, cam);
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, W, v.H);
     ctx.clip();
-    ctx.translate(0, -g.camY);
-    const top = g.camY - 90;
-    const bot = g.camY + v.H + 90;
+    ctx.translate(0, -cam);
+    const top = cam - 90;
+    const bot = cam + v.H + 90;
 
     // 最高分记录线
     if (g.best > 0) {
@@ -744,15 +833,38 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
     for (let i = 0; i < g.platforms.length; i++) {
       const p = g.platforms[i];
-      if (p.y > top && p.y < bot) platform(ctx, p);
+      if (p.y > top && p.y < bot) {
+        const ox = p.x;
+        if (p.vx) p.x = ix(p.px, p.x, a);
+        platform(ctx, p);
+        p.x = ox;
+      }
     }
     for (let i = 0; i < g.holes.length; i++) hole(ctx, g.holes[i]);
+    effects(ctx, g.fx);
     for (let i = 0; i < g.monsters.length; i++) {
       const m = g.monsters[i];
-      if (m.y > top - 40 && m.y < bot + 40) monster(ctx, m, g.dd);
+      if (m.y > top - 40 && m.y < bot + 40) {
+        const ox = m.x;
+        const oy = m.y;
+        m.x = ix(m.px, m.x, a);
+        m.y = ix(m.py, m.y, a);
+        monster(ctx, m, g.dd);
+        m.x = ox;
+        m.y = oy;
+      }
     }
     for (let i = 0; i < g.debris.length; i++) debris(ctx, g.debris[i]);
-    for (let i = 0; i < g.bullets.length; i++) bullet(ctx, g.bullets[i]);
+    for (let i = 0; i < g.bullets.length; i++) {
+      const b = g.bullets[i];
+      const ox = b.x;
+      const oy = b.y;
+      b.x = ix(b.px, b.x, a);
+      b.y = ix(b.py, b.y, a);
+      bullet(ctx, b);
+      b.x = ox;
+      b.y = oy;
+    }
     for (let i = 0; i < g.sparks.length; i++) {
       const s = g.sparks[i];
       ctx.globalAlpha = clamp(s.life / s.max, 0, 1);
@@ -760,17 +872,23 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       fillStroke(ctx, '#ffd93b', 1.2);
       ctx.globalAlpha = 1;
     }
-    doodler(ctx, g.dd);
+    speedLines(ctx, g.dd, ix(g.dd.px, g.dd.x, a), ix(g.dd.py, g.dd.y, a));
+    doodler(ctx, g.dd, a);
     ctx.restore();
     letterbox(ctx);
-    hud(ctx, g.score);
+    hud(ctx, Math.round(DJ.shownScore === undefined ? g.score : DJ.shownScore));
   };
 
   // 菜单里用的假小橘
   DJ.fakeDoodler = function (x, y, facing, vy, bounceT, t) {
     // 菜单里没有物理，用落地后的衰减余弦模拟肚子的 duang duang
-    const belly = 0.5 * Math.exp(-bounceT * 6) * Math.cos(bounceT * 20);
-    return { x: x, y: y, facing: facing, vy: vy, bounceT: bounceT, t: t, belly: belly, state: 'normal', shootT: 99, aim: -Math.PI / 2, spin: 0, scale: 1 };
+    const belly = 0.75 * Math.exp(-bounceT * 3.2) * Math.cos(bounceT * 19.5);
+    const b2 = 0.9 * Math.exp(-bounceT * 3.4) * Math.cos(bounceT * 19.5 - 0.9);
+    return {
+      x: x, y: y, facing: facing, vy: vy, bounceT: bounceT, t: t,
+      belly: belly, b2: b2, look: facing * 0.7, armPose: Math.max(-1, Math.min(1, vy / 350)), stretch: Math.max(-0.12, Math.min(0.16, -vy / 3500)),
+      state: 'normal', shootT: 99, aim: -Math.PI / 2, spin: 0, scale: 1,
+    };
   };
   DJ.drawPlatformAt = function (ctx, type, x, y) {
     platform(ctx, { type: type, x: x, y: y, w: DJ.C.PLAT_W, h: DJ.C.PLAT_H, dead: false, fade: 0, item: null });

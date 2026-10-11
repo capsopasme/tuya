@@ -43,6 +43,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     this.bullets = [];
     this.debris = [];
     this.sparks = [];
+    this.fx = []; // 纯视觉特效：尘土、冲击环
     this.whirT = 0;
     const baseY = H - 56;
     this.startY = baseY;
@@ -65,6 +66,11 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       aim: -Math.PI / 2,
       belly: 0, // 肚子挤压量（>0 往下坠、变宽变扁；<0 往上缩、变窄变高）
       bellyV: 0,
+      b2: 0, // 肚皮：跟着 belly 晃的第二层弹簧
+      b2V: 0,
+      look: 0, // 脸朝向（-1..1，平滑过渡）
+      armPose: 0, // 手臂姿态（-1 高举 .. 1 下垂，平滑过渡）
+      stretch: 0, // 空中拉伸（跟速度走，平滑过渡）
       spin: 0,
       scale: 1,
       sx: 0,
@@ -75,6 +81,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     };
     this.genUntil(this.camY - 220);
     this.events.length = 0;
+    this.snapshot();
   };
 
   // ---------- 关卡生成 ----------
@@ -86,7 +93,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   };
 
   P.addPlatform = function (type, x, y) {
-    const p = { type: type, x: x, y: y, w: C.PLAT_W, h: C.PLAT_H, vx: 0, dead: false, fade: 0, item: null };
+    const p = { type: type, x: x, y: y, w: C.PLAT_W, h: C.PLAT_H, vx: 0, dead: false, fade: 0, item: null, dip: 0, dipV: 0 };
     if (type === 'moving') {
       p.vx = (DJ.random() < 0.5 ? -1 : 1) * rand(50, 85 + 45 * this.diffAt(this.scoreAtY(y)));
     }
@@ -193,8 +200,28 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
   // ---------- 主循环 ----------
   // input: { axis: -1..1, shots: [{tx,ty} | {dx,dy}] }
+  // 渲染插值用：每个固定步长开始前记下上一步的位置（画面在两步之间按比例插值，60/90/120Hz 屏幕都一样顺）
+  P.snapshot = function () {
+    const dd = this.dd;
+    dd.px = dd.x;
+    dd.py = dd.y;
+    this.pCam = this.camY;
+    for (let i = 0; i < this.platforms.length; i++) this.platforms[i].px = this.platforms[i].x;
+    for (let i = 0; i < this.monsters.length; i++) {
+      const m = this.monsters[i];
+      m.px = m.x;
+      m.py = m.y;
+    }
+    for (let i = 0; i < this.bullets.length; i++) {
+      const b = this.bullets[i];
+      b.px = b.x;
+      b.py = b.y;
+    }
+  };
+
   P.update = function (dt, input) {
     if (this.phase === 'over') return;
+    this.snapshot();
     this.t += dt;
     if (this.phase === 'play') this.stepPlay(dt, input || {});
     else this.stepFalling(dt);
@@ -209,9 +236,17 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     dd.shootT += dt;
     dd.shootCd -= dt;
     dd.prevY = dd.y;
-    // 肚子：阻尼弹簧，被 bounce() 的速度突变踢一脚后自己晃几下
+    // 肚子：阻尼弹簧，被 bounce() 的速度突变踢一脚后自己晃几下；肚皮再挂一层更软的弹簧，晃得更晚更大
     dd.bellyV += (-C.BELLY_K * dd.belly - C.BELLY_C * dd.bellyV) * dt;
-    dd.belly = clamp(dd.belly + dd.bellyV * dt, -0.8, 0.8);
+    dd.belly = clamp(dd.belly + dd.bellyV * dt, -1, 1);
+    dd.b2V += (C.BELLY2_K * (dd.belly - dd.b2) - C.BELLY2_C * dd.b2V) * dt;
+    dd.b2 = clamp(dd.b2 + dd.b2V * dt, -1.3, 1.3);
+    // 其余姿态量都做指数平滑，没有任何一帧是“瞬间切换”的
+    const ease = (rate) => 1 - Math.exp(-rate * dt);
+    dd.stretch += (clamp(-dd.vy / 3500, -0.12, 0.16) - dd.stretch) * ease(14);
+    dd.armPose += (clamp(dd.vy / 350, -1, 1) - dd.armPose) * ease(16);
+    const lookT = dd.shootT < 0.35 ? Math.sign(Math.cos(dd.aim)) * 0.9 : clamp(dd.vx / 140, -1, 1);
+    dd.look += (lookT - dd.look) * ease(12);
     const st = dd.state;
     const flying = st === 'propeller' || st === 'jetpack';
 
@@ -278,10 +313,12 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       if (dd.state === 'normal') this.hazards();
     }
 
-    // 相机只往上走
-    const lim = this.camY + this.H * C.CAM_FRAC;
-    if (dd.y < lim && (dd.state === 'normal' || dd.state === 'propeller' || dd.state === 'jetpack')) {
-      this.camY = dd.y - this.H * C.CAM_FRAC;
+    // 相机只往上走，而且是缓动跟随（不是硬贴着角色），冲得太快时才硬拉住别让角色出屏幕
+    if (dd.state === 'normal' || dd.state === 'propeller' || dd.state === 'jetpack') {
+      const target = dd.y - this.H * C.CAM_FRAC;
+      if (target < this.camY) this.camY += (target - this.camY) * (1 - Math.exp(-C.CAM_K * dt));
+      const topLimit = dd.y - this.H * C.CAM_TOP;
+      if (topLimit < this.camY) this.camY = topLimit;
     }
     if (dd.state === 'normal' || dd.state === 'propeller' || dd.state === 'jetpack') {
       this.maxH = Math.max(this.maxH, this.startY - dd.y);
@@ -316,6 +353,17 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       this.phase = 'over';
       this.sfx('over');
     }
+  };
+
+  // 视觉特效（用 Math.random，不碰会影响关卡生成的种子随机数）
+  P.puff = function (x, y, n, spd) {
+    for (let i = 0; i < n; i++) {
+      const s = n > 1 ? (i / (n - 1)) * 2 - 1 : 0;
+      this.fx.push({ k: 'puff', x: x + s * 11, y: y - 1, vx: s * spd * (0.7 + Math.random() * 0.5), vy: -(10 + Math.random() * 30), r: 3 + Math.random() * 2.5, life: 0.5, max: 0.5 });
+    }
+  };
+  P.ring = function (x, y) {
+    this.fx.push({ k: 'ring', x: x, y: y, r: 6, vx: 0, vy: 0, life: 0.36, max: 0.36 });
   };
 
   P.bounce = function (v) {
@@ -354,6 +402,9 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       dd.y = best.sy;
       best.it.fired = true;
       best.it.t = 0;
+      p.dipV += 200;
+      this.puff(dd.x, best.sy, 6, 120);
+      this.ring(dd.x, best.sy);
       if (best.it.type === 'spring') {
         this.bounce(C.SPRING_V);
         this.sfx('spring');
@@ -368,6 +419,8 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       return;
     }
     dd.y = best.sy;
+    p.dipV += 150; // 平台被踩得往下沉一点再弹回来
+    this.puff(dd.x, best.sy, 4, 70);
     this.bounce(C.JUMP_V);
     this.sfx('jump');
     if (p.type === 'white') {
@@ -563,6 +616,11 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
           p.vx = -p.vx;
         }
       }
+      if (p.dip || p.dipV) {
+        p.dipV += (-C.DIP_K * p.dip - C.DIP_C * p.dipV) * dt;
+        p.dip += p.dipV * dt;
+        if (Math.abs(p.dip) < 0.01 && Math.abs(p.dipV) < 0.5) p.dip = p.dipV = 0;
+      }
       if (p.dead) p.fade += dt;
       if (p.item && p.item.fired) p.item.t += dt;
       if (p.y > bottom + 80 || (p.dead && p.fade > 0.3)) this.platforms.splice(i, 1);
@@ -634,6 +692,20 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       q.y += q.vy * dt;
       q.rot += q.vr * dt;
       if (q.y > bottom + 100) this.debris.splice(i, 1);
+    }
+
+    for (let i = this.fx.length - 1; i >= 0; i--) {
+      const f = this.fx[i];
+      f.life -= dt;
+      if (f.k === 'puff') {
+        f.vx *= Math.exp(-3.5 * dt);
+        f.vy *= Math.exp(-2.5 * dt);
+        f.x += f.vx * dt;
+        f.y += f.vy * dt;
+      } else {
+        f.r += 150 * dt * Math.max(0.15, f.life / f.max);
+      }
+      if (f.life <= 0) this.fx.splice(i, 1);
     }
 
     for (let i = this.sparks.length - 1; i >= 0; i--) {

@@ -56,6 +56,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         w.setDecorFitsSystemWindows(false);
         WindowManager.LayoutParams lp = w.getAttributes();
         lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        // 向系统申请最高刷新率：游戏动画按 120Hz 渲染插值，系统默认可能把 WebView 降到 60/90Hz
+        lp.preferredRefreshRate = 120f;
         w.setAttributes(lp);
 
         sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -128,6 +130,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         if (accel != null) {
             sensors.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME);
         }
+        // 通知游戏：切回来了，立刻按当前握持姿势对齐倾斜，并重置计时
+        web.evaluateJavascript("(window.DJ && DJ.onResume) ? DJ.onResume() : 0", null);
     }
 
     @Override

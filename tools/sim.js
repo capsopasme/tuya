@@ -80,6 +80,7 @@ function run(seed, opts) {
   let steps = 0;
   const maxSteps = (opts.seconds || 900) / DT;
   let maxPlat = 0;
+  let minRel = Infinity; // 角色在屏幕里的最高位置（相对镜头顶部）
   let nan = false;
   let hazards = 0;
   while (g.phase !== 'over' && steps < maxSteps) {
@@ -97,8 +98,9 @@ function run(seed, opts) {
       break;
     }
     if (g.monsters.length + g.holes.length > 0) hazards++;
+    if (dd.state === 'normal' || dd.state === 'propeller' || dd.state === 'jetpack') minRel = Math.min(minRel, dd.y - g.camY);
   }
-  return { seed: seed, score: g.score, seconds: steps * DT, over: g.phase === 'over', maxPlat: maxPlat, nan: nan, state: g.dd.state, hazards: hazards };
+  return { seed: seed, score: g.score, seconds: steps * DT, over: g.phase === 'over', maxPlat: maxPlat, nan: nan, state: g.dd.state, hazards: hazards, minRel: minRel, H: g.H };
 }
 
 // ---------- 静态检查：生成的关卡里，相邻“主平台”高度差必须小于起跳高度 ----------
@@ -182,9 +184,9 @@ function unitTests(fails) {
   const tail = Math.max.apply(null, after.slice(95, 110).map(Math.abs)); // 落地后约 0.8s
   const crossings = after.slice(0, 100).filter((v, i, a) => i && Math.sign(v) !== Math.sign(a[i - 1])).length;
   console.log('肚子晃动：峰值 %s，过零 %d 次，末段残余 %s', peak.toFixed(2), crossings, tail.toFixed(3));
-  if (!(peak > 0.15 && peak <= 0.8)) fails.push('肚子晃动幅度不合理：' + peak);
+  if (!(peak > 0.4 && peak <= 1)) fails.push('肚子晃动幅度不合理：' + peak);
   if (crossings < 2) fails.push('肚子只晃了不到一个来回（应该 duang duang 好几下）');
-  if (tail > 0.05) fails.push('肚子没有收住：' + tail);
+  if (tail > 0.12) fails.push('肚子没有收住：' + tail);
 
   // 自动瞄准
   let g = bareGame(2);
@@ -252,6 +254,7 @@ function main() {
   console.log('无怪物 16 局得分中位数 %d，最低 %d', median(cleanScores), Math.min.apply(null, cleanScores));
   for (const r of clean) {
     if (r.nan) fails.push('seed ' + r.seed + ' 出现 NaN');
+    if (r.minRel < r.H * 0.1) fails.push('seed ' + r.seed + ' 镜头缓动后角色跑出了屏幕上方（' + r.minRel.toFixed(0) + 'px）');
     if (r.score < 4000) fails.push('seed ' + r.seed + ' 无怪物下只到 ' + r.score + '（机器人应该能上去）');
   }
 

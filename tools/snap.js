@@ -15,7 +15,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.screenshot({ path: path.join(OUT, 'menu.png') });
     for (const id of ['scores', 'settings']) {
       await tapButton(page, id);
-      await sleep(150);
+      if (id === 'settings') await page.evaluate(() => DJ.input.setRaw(9));
+      await sleep(700);
       await page.screenshot({ path: path.join(OUT, id + '.png') });
       await tapButton(page, 'back');
       await sleep(150);

@@ -40,7 +40,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await tapButton(page, 'play');
     await sleep(200);
     check(await page.evaluate(() => DJ.ui.screen === 'play'), '点“开始游戏”进入游戏');
-    check(await page.evaluate(() => DJ.input.coarse === true), '识别为触屏设备');
 
     // 起始平台上能持续弹跳（高度来回变化）
     const ys = [];
@@ -53,7 +52,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     // 倾斜控制：向右倾，x 应当往右走（或环绕）
     await tilt(page, 0);
-    check(await page.evaluate(() => DJ.input.tiltActive()), '收到重力感应后启用倾斜控制');
+    check(await page.evaluate(() => DJ.input.tiltSeen && DJ.input.raw !== null), '收到重力感应读数');
     const x0 = await page.evaluate(() => DJ.app.game.dd.x);
     await tilt(page, 22);
     await sleep(350);
@@ -65,6 +64,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const vx = await page.evaluate(() => DJ.app.game.dd.vx);
     check(vx < 0, '向左倾斜，角色向左移动（vx=' + vx.toFixed(0) + '）');
     await tilt(page, 0);
+
+    // 移动只靠倾斜：手指按在屏幕左边不放，角色不应该被“拖着走”
+    await page.evaluate(() => {
+      const c = document.getElementById('c');
+      c.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 400, bubbles: true }));
+    });
+    await sleep(400);
+    const vHold = await page.evaluate(() => DJ.app.game.dd.vx);
+    check(Math.abs(vHold) < 25, '按住屏幕一侧不会让角色移动（vx=' + vHold.toFixed(1) + '）');
+    await page.evaluate(() => {
+      const c = document.getElementById('c');
+      c.dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 400, bubbles: true }));
+    });
 
     // 点击屏幕射击
     const before = await page.evaluate(() => DJ.app.game.bullets.length);
@@ -85,6 +97,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.screenshot({ path: path.join(OUT, 'pause.png') });
     await tapButton(page, 'resume');
     check(await page.evaluate(() => DJ.ui.screen === 'play'), '能继续游戏');
+
+    // 切出应用再切回：暂停期间手机姿势变了，继续的一瞬间倾斜就应该立刻生效（不能有“几秒无效”）
+    await tilt(page, 0);
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await sleep(80);
+    await tilt(page, 25);
+    await tapButton(page, 'resume');
+    await sleep(160);
+    const vResume = await page.evaluate(() => DJ.app.game.dd.vx);
+    check(vResume > 60, '切回继续后 160ms 内倾斜就已生效（vx=' + vResume.toFixed(0) + '）');
+    await tilt(page, 0);
+    // 新开一局同理
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await sleep(80);
+    await tilt(page, -25);
+    await tapButton(page, 'menu');
+    await sleep(100);
+    await tapButton(page, 'play');
+    await sleep(200);
+    const vNew = await page.evaluate(() => DJ.app.game.dd.vx);
+    check(vNew < -60, '新开一局 200ms 内倾斜就已生效（vx=' + vNew.toFixed(0) + '）');
+    await tilt(page, 0);
+
+    // 渲染插值：普通插值、跨屏环绕不插值
+    check(await page.evaluate(() => DJ.ix(0, 10, 0.5) === 5 && DJ.ix(310, 10, 0.5) === 10 && DJ.ix(undefined, 7, 0.5) === 7), '渲染插值函数正确');
 
     // 往上爬：给个大力道直接升空，确认分数和镜头在走
     await page.evaluate(() => {
@@ -151,12 +188,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       try {
         await tapButton(native.page, 'play');
         await sleep(200);
+        // 每一段检查前都把角色放回起始平台上，免得走出平台摔死后读到过期的 vx
+        const reset = () =>
+          native.page.evaluate(() => {
+            const g = DJ.app.game;
+            g.dd.x = 160;
+            g.dd.vx = 0;
+          });
+        await reset();
         await native.page.evaluate(() => (window.__t = 20));
-        await sleep(500);
+        await sleep(350);
         const vxN = await native.page.evaluate(() => DJ.app.game.dd.vx);
         check(vxN > 100, '原生倾斜桥向右 20° → 角色向右加速（vx=' + vxN.toFixed(0) + '）');
+        // 原生传感器在时，浏览器自己的 devicemotion 必须被忽略（两路读数交替写入会互相抵消，曾是“倾斜无效”的隐患）
+        await reset();
+        for (let i = 0; i < 5; i++) {
+          await tilt(native.page, -20);
+          await sleep(60);
+        }
+        check((await native.page.evaluate(() => DJ.app.game.dd.vx)) > 100, '原生桥存在时忽略 devicemotion 的冲突读数');
+        await reset();
         await native.page.evaluate(() => (window.__t = -20));
-        await sleep(800);
+        await sleep(350);
         check((await native.page.evaluate(() => DJ.app.game.dd.vx)) < -100, '原生倾斜桥向左 20° → 角色向左加速');
         check(native.errors.length === 0, '原生桥场景没有脚本报错' + (native.errors.length ? '：' + native.errors.join(' | ') : ''));
       } finally {
