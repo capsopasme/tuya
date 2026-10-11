@@ -121,6 +121,119 @@ function checkLevelGaps() {
   return { jumpH: jumpH, worstGap: worst };
 }
 
+// ---------- 针对具体机制的小测试 ----------
+function bareGame(seed) {
+  DJ.seed(seed);
+  const g = new DJ.Game();
+  g.H = 560;
+  g.reset();
+  g.platforms.length = 0;
+  g.monsters.length = 0;
+  g.holes.length = 0;
+  g.camY = 0;
+  return g;
+}
+
+// 角色从平台上方落下，返回落地时触发的音效名和肚子晃动的轨迹
+function dropOnto(x, item) {
+  const g = bareGame(1);
+  const p = g.addPlatform('normal', 160, 400);
+  p.vx = 0;
+  if (item) p.item = Object.assign({ used: false, fired: false, t: 0 }, item);
+  g.dd.x = x;
+  g.dd.y = 300;
+  g.dd.prevY = 300;
+  g.dd.vy = 200;
+  const names = [];
+  const belly = [];
+  let hit = -1;
+  for (let i = 0; i < 360; i++) {
+    g.update(DT, { axis: 0, shots: [] });
+    const ev = g.events.splice(0);
+    if (ev.length && hit < 0) hit = i;
+    names.push.apply(names, ev);
+    belly.push(g.dd.belly);
+  }
+  return { names: names, belly: belly, hit: hit };
+}
+
+function unitTests(fails) {
+  const has = (r, n) => r.names.indexOf(n) >= 0;
+  const spring = { type: 'spring', ox: -24, w: 18, h: 14 };
+
+  // 弹簧在平台左侧 24px，角色身体中心在平台内、但离弹簧很远：半个身子压在砖上就该触发
+  let r = dropOnto(186, spring);
+  if (!has(r, 'spring') || has(r, 'jump')) fails.push('身体中心在平台内、离弹簧较远时应当触发弹簧，实际：' + r.names.slice(0, 3));
+  // 身体中心已经出了平台边缘（只剩脚还搭着）：只算普通落地
+  r = dropOnto(196, spring);
+  if (has(r, 'spring') || !has(r, 'jump')) fails.push('身体中心在平台外时不应触发弹簧，实际：' + r.names.slice(0, 3));
+  // 正踩在弹簧上
+  r = dropOnto(136, spring);
+  if (!has(r, 'spring')) fails.push('正踩弹簧没有触发');
+  // 蹦床同理
+  r = dropOnto(186, { type: 'tramp', ox: -24, w: 42, h: 10 });
+  if (!has(r, 'tramp')) fails.push('蹦床：身体中心在平台内应当触发');
+
+  // 肚子：落地后明显晃动，随后衰减，始终有界
+  r = dropOnto(160, null);
+  // 只看第一次落地之后、下一次落地之前（一次完整跳跃约 1 秒）
+  const after = r.belly.slice(r.hit);
+  const peak = Math.max.apply(null, after.slice(0, 60).map(Math.abs));
+  const tail = Math.max.apply(null, after.slice(95, 110).map(Math.abs)); // 落地后约 0.8s
+  const crossings = after.slice(0, 100).filter((v, i, a) => i && Math.sign(v) !== Math.sign(a[i - 1])).length;
+  console.log('肚子晃动：峰值 %s，过零 %d 次，末段残余 %s', peak.toFixed(2), crossings, tail.toFixed(3));
+  if (!(peak > 0.15 && peak <= 0.8)) fails.push('肚子晃动幅度不合理：' + peak);
+  if (crossings < 2) fails.push('肚子只晃了不到一个来回（应该 duang duang 好几下）');
+  if (tail > 0.05) fails.push('肚子没有收住：' + tail);
+
+  // 自动瞄准
+  let g = bareGame(2);
+  g.dd.x = 100;
+  g.dd.y = 450;
+  const m = g.makeMonster('blob', 260, 200);
+  m.amp = 0;
+  g.monsters.push(m);
+  g.fire({ tx: 20, ty: 450 }); // 点在左下角，但怪物在右上方
+  let b = g.bullets[0];
+  let ang = Math.atan2(b.vy, b.vx);
+  let want = Math.atan2(200 - (450 - 32), 260 - 100);
+  if (Math.abs(ang - want) > 0.05) fails.push('自动瞄准没有指向怪物：' + ang.toFixed(2) + ' vs ' + want.toFixed(2));
+
+  // 没有怪物：朝点击的方向
+  g = bareGame(3);
+  g.dd.x = 100;
+  g.dd.y = 450;
+  g.fire({ tx: 250, ty: 100 });
+  b = g.bullets[0];
+  ang = Math.atan2(b.vy, b.vx);
+  want = Math.atan2(100 - (450 - 32), 250 - 100);
+  if (Math.abs(ang - want) > 0.05) fails.push('没有怪物时应朝点击方向：' + ang.toFixed(2) + ' vs ' + want.toFixed(2));
+
+  // 怪物在脚下（打不到）或在屏幕外：不应被选中，仍朝点击方向
+  g = bareGame(4);
+  g.dd.x = 100;
+  g.dd.y = 300;
+  const below = g.makeMonster('blob', 160, 520);
+  const above = g.makeMonster('blob', 200, -100);
+  g.monsters.push(below, above);
+  g.fire({ tx: 250, ty: 100 });
+  b = g.bullets[0];
+  ang = Math.atan2(b.vy, b.vx);
+  want = Math.atan2(100 - (300 - 32), 250 - 100);
+  if (Math.abs(ang - want) > 0.05) fails.push('下方/屏幕外的怪物不应被自动瞄准');
+
+  // 子弹真的能打死自动瞄准的怪物（含移动的飞行怪，验证提前量）
+  g = bareGame(5);
+  g.dd.x = 60;
+  g.dd.y = 480;
+  const fl = g.makeMonster('flyer', 200, 150);
+  fl.vx = 80;
+  g.monsters.push(fl);
+  g.fire({ tx: 0, ty: 0 });
+  for (let i = 0; i < 360 && !fl.dead && fl.hp > 0; i++) g.update(DT, { axis: 0, shots: [] });
+  if (fl.hp === 2) fails.push('自动瞄准的子弹没有命中移动中的怪物（提前量不对？）');
+}
+
 function median(a) {
   const s = a.slice().sort((x, y) => x - y);
   return s[Math.floor(s.length / 2)];
@@ -152,6 +265,8 @@ function main() {
     if (r.maxPlat > 120) fails.push('seed ' + r.seed + ' 平台数组过大 ' + r.maxPlat + '（没有及时回收？）');
   }
   if (median(fullScores) < 1500) fails.push('有怪物时中位数过低，开局难度可能过高');
+
+  unitTests(fails);
 
   // 同种子应复现同样结果
   const a = run(5, { noHazards: true, seconds: 60 });

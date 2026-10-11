@@ -281,6 +281,12 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     else if (vy < 150) L = 16 - 7 * clamp((vy + 150) / 300, 0, 1);
     else L = 9;
     const cy = -(L + 21);
+    // 肚子果冻晃动：以身体底部为支点挤压/拉伸（belly>0 又宽又扁，<0 又窄又高）
+    const bd = clamp(dd.belly || 0, -0.8, 0.8);
+    const sxB = 1 + 0.3 * bd;
+    const syB = 1 - 0.24 * bd;
+    const pivY = cy + 20;
+    const topY = pivY - 39 * syB; // 头顶位置，芽和螺旋桨帽跟着走
     const shooting = st !== 'dead' && dd.shootT < 0.22;
     const la = dd.facing > 0 ? dd.aim : Math.PI - dd.aim; // 本地坐标下的瞄准角
 
@@ -329,8 +335,8 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         dy = Math.sin(la);
       }
       const n = Math.hypot(dx, dy);
-      const sx0 = s * 16;
-      const sy0 = cy + 4;
+      const sx0 = s * 16 * sxB;
+      const sy0 = pivY - 16 * syB;
       ctx.beginPath();
       ctx.moveTo(sx0, sy0);
       ctx.lineTo(sx0 + (dx / n) * 10, sy0 + (dy / n) * 10);
@@ -345,7 +351,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     // 头顶的小芽（螺旋桨帽出现时收起来）
     if (st !== 'propeller') {
       ctx.save();
-      ctx.translate(0, cy - 19);
+      ctx.translate(0, topY);
       const sway = Math.sin(dd.t * 7) * 0.1 + clamp(vy / 1600, -0.5, 0.5);
       ctx.rotate(sway);
       ctx.beginPath();
@@ -366,7 +372,11 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.restore();
     }
 
-    // 身体
+    // 身体（整体随肚子晃动挤压）
+    ctx.save();
+    ctx.translate(0, pivY);
+    ctx.scale(sxB, syB);
+    ctx.translate(0, -pivY);
     const bg = ctx.createRadialGradient(-6, cy - 9, 3, 0, cy, 28);
     bg.addColorStop(0, '#ffc98a');
     bg.addColorStop(1, '#f06b3d');
@@ -375,7 +385,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     fillStroke(ctx, bg, 2.3);
     // 肚皮
     ctx.beginPath();
-    ctx.ellipse(0, cy + 8, 12.5, 9.5, 0, 0, TAU);
+    ctx.ellipse(0, cy + 8 + bd * 4, 12.5 + bd * 3, 9.5 - bd * 1.5, 0, 0, TAU); // 肚皮比身体晃得更多一点
     ctx.fillStyle = 'rgba(255,238,200,0.8)';
     ctx.fill();
 
@@ -442,9 +452,11 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.stroke();
     }
 
+    ctx.restore();
+
     // 螺旋桨帽
     if (st === 'propeller') {
-      const hy = cy - 19;
+      const hy = topY;
       ctx.beginPath();
       ctx.arc(0, hy, 11, Math.PI, TAU);
       ctx.closePath();
@@ -756,7 +768,9 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
   // 菜单里用的假小橘
   DJ.fakeDoodler = function (x, y, facing, vy, bounceT, t) {
-    return { x: x, y: y, facing: facing, vy: vy, bounceT: bounceT, t: t, state: 'normal', shootT: 99, aim: -Math.PI / 2, spin: 0, scale: 1 };
+    // 菜单里没有物理，用落地后的衰减余弦模拟肚子的 duang duang
+    const belly = 0.5 * Math.exp(-bounceT * 6) * Math.cos(bounceT * 20);
+    return { x: x, y: y, facing: facing, vy: vy, bounceT: bounceT, t: t, belly: belly, state: 'normal', shootT: 99, aim: -Math.PI / 2, spin: 0, scale: 1 };
   };
   DJ.drawPlatformAt = function (ctx, type, x, y) {
     platform(ctx, { type: type, x: x, y: y, w: DJ.C.PLAT_W, h: DJ.C.PLAT_H, dead: false, fade: 0, item: null });

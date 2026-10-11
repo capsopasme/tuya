@@ -91,6 +91,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       g.bullets.push({ x: 170, y: 170, vx: 0, vy: 0, life: 1 });
       `
     );
+    for (const [name, v] of [['belly-0', 0], ['belly-pos', 0.5], ['belly-neg', -0.5]]) {
+      await stage(name, `g.dd.x = 160; g.dd.y = g.H - 60; g.dd.belly = ${v}; g.dd.vy = 0; g.dd.bounceT = 0.3;`);
+    }
     await stage('propeller', `g.dd.state = 'propeller'; g.dd.x = 160; g.dd.y = 300; g.dd.vy = -500; g.dd.facing = -1;`);
     await stage('dead', `g.dd.state = 'dead'; g.dd.x = 160; g.dd.y = 300; g.dd.vy = 100; g.dd.facing = 1; g.dd.t = 0.3;`);
 

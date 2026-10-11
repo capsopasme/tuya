@@ -63,6 +63,8 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       shootT: 99,
       shootCd: 0,
       aim: -Math.PI / 2,
+      belly: 0, // 肚子挤压量（>0 往下坠、变宽变扁；<0 往上缩、变窄变高）
+      bellyV: 0,
       spin: 0,
       scale: 1,
       sx: 0,
@@ -207,6 +209,9 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     dd.shootT += dt;
     dd.shootCd -= dt;
     dd.prevY = dd.y;
+    // 肚子：阻尼弹簧，被 bounce() 的速度突变踢一脚后自己晃几下
+    dd.bellyV += (-C.BELLY_K * dd.belly - C.BELLY_C * dd.bellyV) * dt;
+    dd.belly = clamp(dd.belly + dd.bellyV * dt, -0.8, 0.8);
     const st = dd.state;
     const flying = st === 'propeller' || st === 'jetpack';
 
@@ -314,8 +319,11 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   };
 
   P.bounce = function (v) {
-    this.dd.vy = -v;
-    this.dd.bounceT = 0;
+    const dd = this.dd;
+    // 速度从“下落”突变成“上冲”，肚子跟不上，先被甩下去再弹回来
+    dd.bellyV += (v + dd.vy) * C.BELLY_GAIN;
+    dd.vy = -v;
+    dd.bounceT = 0;
   };
 
   P.landing = function () {
@@ -332,7 +340,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       const it = p.item;
       if (it && !it.used && (it.type === 'spring' || it.type === 'tramp')) {
         const sy = p.y - it.h;
-        if (prev <= sy + 0.01 && cur >= sy && Math.abs(wrapDx(dd.x, p.x + it.ox)) <= it.w / 2 + C.FEET - 2) {
+        // 脚踩到道具本身，或者身体中心已经在这块平台范围内（半个身子压在砖上）都算踩中
+        const onItem = Math.abs(wrapDx(dd.x, p.x + it.ox)) <= it.w / 2 + C.FEET - 2;
+        const overBrick = Math.abs(wrapDx(dd.x, p.x)) <= (p.w / 2) * C.ITEM_REACH;
+        if (prev <= sy + 0.01 && cur >= sy && (onItem || overBrick)) {
           if (!best || sy < best.sy) best = { sy: sy, p: p, it: it };
         }
       }
@@ -447,6 +458,38 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     }
   };
 
+  // 怪物在 t 秒后的位置（给子弹留提前量）
+  P.monsterAt = function (m, t) {
+    const tt = m.t + t;
+    if (m.kind === 'blob') return { x: m.x0 + Math.sin(tt * m.sp) * m.amp, y: m.y };
+    if (m.kind === 'flyer') return { x: clamp(m.x + m.vx * t, 30, W - 30), y: m.y0 + Math.sin(tt * 2.2) * 14 };
+    return { x: clamp(m.x + m.vx * t, 40, W - 40), y: m.y0 + Math.sin(tt * 1.5) * 8 };
+  };
+
+  // 找最近的、在屏幕里、而且在射击角度范围内（往上方）的怪物
+  P.findTarget = function (bx, by) {
+    const hi = -0.2;
+    const lo = -Math.PI + 0.2;
+    let best = null;
+    let bd = Infinity;
+    for (let i = 0; i < this.monsters.length; i++) {
+      const m = this.monsters[i];
+      if (m.dead) continue;
+      const sy = m.y - this.camY;
+      if (sy < 4 || sy > this.H || m.x < -10 || m.x > W + 10) continue;
+      let d = Math.hypot(m.x - bx, m.y - by);
+      const q = this.monsterAt(m, d / C.BULLET_V);
+      const a = Math.atan2(q.y - by, q.x - bx);
+      if (a > hi || a < lo) continue;
+      d = Math.hypot(q.x - bx, q.y - by);
+      if (d < bd) {
+        bd = d;
+        best = q;
+      }
+    }
+    return best;
+  };
+
   P.fire = function (shot) {
     const dd = this.dd;
     if (dd.shootCd > 0) return;
@@ -454,7 +497,12 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const by = dd.y - 32;
     let ax;
     let ay;
-    if (shot.tx !== undefined) {
+    // 自动瞄准：屏幕里有能打到的怪物就直接朝它打，不管点在哪
+    const tg = this.findTarget(bx, by);
+    if (tg) {
+      ax = tg.x - bx;
+      ay = tg.y - by;
+    } else if (shot.tx !== undefined) {
       ax = wrapDx(shot.tx, dd.x) + (dd.x - bx);
       ay = shot.ty + this.camY - by;
     } else {
