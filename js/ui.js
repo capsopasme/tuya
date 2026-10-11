@@ -156,7 +156,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     DJ.drawPlatformAt(ctx, 'normal', 278, H * 0.5);
     DJ.drawPlatformAt(ctx, 'brown', 270, H * 0.72);
     DJ.drawPlatformAt(ctx, 'white', 50, H * 0.8);
-    // 在底部平台上弹跳的小橘：用和游戏里同一条抛物线，落地时肚子弹簧衰减晃动
+    // 在底部平台上弹跳的小海星：用和游戏里同一条抛物线，落地时肚子弹簧衰减晃动
     const by = H - 52;
     DJ.drawPlatformAt(ctx, 'normal', W / 2, by);
     const period = 0.95;

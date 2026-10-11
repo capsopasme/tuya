@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标前景：小橘站在平台上。安全区是中间 66dp，所有内容都画在 24~84 之内 -->
+<!-- 自适应图标前景：绿色胖海星站在平台上。安全区是中间 66dp，所有内容都画在 24~84 之内 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -13,56 +13,45 @@
         android:strokeWidth="1.6"
         android:pathData="M31,78 L77,78 A4,4 0 0 1 81,82 L81,84 A4,4 0 0 1 77,88 L31,88 A4,4 0 0 1 27,84 L27,82 A4,4 0 0 1 31,78 Z" />
 
-    <!-- 腿 -->
+    <!-- 海星：同一条五角星路径，先用粗的黑色圆角描边打底，再用细一点的绿色圆角描边盖上去，得到圆滚滚的胖手臂 -->
     <path
-        android:fillColor="#E3683F"
+        android:fillColor="#2D2D26"
         android:strokeColor="#2D2D26"
-        android:strokeWidth="1.6"
-        android:pathData="M43,66 L49,66 L49,78 L43,78 Z M59,66 L65,66 L65,78 L59,78 Z" />
+        android:strokeWidth="15"
+        android:strokeLineJoin="round"
+        android:pathData="M54.0,36.0 L60.2,46.5 L72.1,49.1 L64.0,58.2 L65.2,70.4 L54.0,65.5 L42.8,70.4 L44.0,58.2 L35.9,49.1 L47.8,46.5 Z" />
+    <path
+        android:fillColor="#82D54C"
+        android:strokeColor="#82D54C"
+        android:strokeWidth="11"
+        android:strokeLineJoin="round"
+        android:pathData="M54.0,36.0 L60.2,46.5 L72.1,49.1 L64.0,58.2 L65.2,70.4 L54.0,65.5 L42.8,70.4 L44.0,58.2 L35.9,49.1 L47.8,46.5 Z" />
 
-    <!-- 小手 -->
+    <!-- 小颗粒 -->
     <path
-        android:strokeColor="#2D2D26"
-        android:strokeWidth="6"
-        android:strokeLineCap="round"
-        android:pathData="M30,52 L24,46 M78,52 L84,46" />
-    <path
-        android:strokeColor="#F0733F"
-        android:strokeWidth="3.4"
-        android:strokeLineCap="round"
-        android:pathData="M30,52 L24,46 M78,52 L84,46" />
+        android:fillColor="#E1FFAF"
+        android:pathData="M52.9,44.5 a1.1,1.1 0 1 0 2.2,0 a1.1,1.1 0 1 0 -2.2,0 Z M53.1,40.2 a0.9,0.9 0 1 0 1.8,0 a0.9,0.9 0 1 0 -1.8,0 Z M62.8,51.8 a1.1,1.1 0 1 0 2.2,0 a1.1,1.1 0 1 0 -2.2,0 Z M67.2,50.4 a0.9,0.9 0 1 0 1.8,0 a0.9,0.9 0 1 0 -1.8,0 Z M59.0,63.5 a1.1,1.1 0 1 0 2.2,0 a1.1,1.1 0 1 0 -2.2,0 Z M61.8,67.0 a0.9,0.9 0 1 0 1.8,0 a0.9,0.9 0 1 0 -1.8,0 Z M46.8,63.5 a1.1,1.1 0 1 0 2.2,0 a1.1,1.1 0 1 0 -2.2,0 Z M44.4,67.0 a0.9,0.9 0 1 0 1.8,0 a0.9,0.9 0 1 0 -1.8,0 Z M43.0,51.8 a1.1,1.1 0 1 0 2.2,0 a1.1,1.1 0 1 0 -2.2,0 Z M39.0,50.4 a0.9,0.9 0 1 0 1.8,0 a0.9,0.9 0 1 0 -1.8,0 Z" />
 
-    <!-- 小芽 -->
+    <!-- 肚皮 -->
     <path
-        android:fillColor="#86D24A"
-        android:strokeColor="#2D2D26"
-        android:strokeWidth="1.5"
-        android:pathData="M54,30 C48,22 40,23 37,27 C42,32 49,33 54,30 Z M54,30 C60,22 68,23 71,27 C66,32 59,33 54,30 Z" />
-
-    <!-- 身体 -->
-    <path
-        android:fillColor="#F5894F"
-        android:strokeColor="#2D2D26"
-        android:strokeWidth="2"
-        android:pathData="M32,52 A22,21 0 1 0 76,52 A22,21 0 1 0 32,52 Z" />
-    <path
-        android:fillColor="#FFEEC8"
-        android:pathData="M42,60 A12,10 0 1 0 66,60 A12,10 0 1 0 42,60 Z" />
+        android:fillColor="#F0FFD2"
+        android:fillAlpha="0.8"
+        android:pathData="M45,61 A9,6.5 0 1 0 63,61 A9,6.5 0 1 0 45,61 Z" />
 
     <!-- 眼睛 -->
     <path
         android:fillColor="#FFFFFF"
         android:strokeColor="#2D2D26"
         android:strokeWidth="1.6"
-        android:pathData="M42,47 A6,6 0 1 0 54,47 A6,6 0 1 0 42,47 Z M56,47 A6,6 0 1 0 68,47 A6,6 0 1 0 56,47 Z" />
+        android:pathData="M42,51 A6,6 0 1 0 54,51 A6,6 0 1 0 42,51 Z M56,51 A6,6 0 1 0 68,51 A6,6 0 1 0 56,51 Z" />
     <path
         android:fillColor="#2D2D26"
-        android:pathData="M45,47.5 A2.8,2.8 0 1 0 50.6,47.5 A2.8,2.8 0 1 0 45,47.5 Z M59,47.5 A2.8,2.8 0 1 0 64.6,47.5 A2.8,2.8 0 1 0 59,47.5 Z" />
+        android:pathData="M45,51.5 A2.8,2.8 0 1 0 50.6,51.5 A2.8,2.8 0 1 0 45,51.5 Z M59,51.5 A2.8,2.8 0 1 0 64.6,51.5 A2.8,2.8 0 1 0 59,51.5 Z" />
 
     <!-- 嘴 -->
     <path
         android:strokeColor="#2D2D26"
         android:strokeWidth="1.8"
         android:strokeLineCap="round"
-        android:pathData="M50,58 Q56,63 62,58" />
+        android:pathData="M50,62 Q55,66.5 60,62" />
 </vector>

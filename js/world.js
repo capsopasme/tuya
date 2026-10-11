@@ -43,7 +43,13 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     this.bullets = [];
     this.debris = [];
     this.sparks = [];
-    this.fx = []; // 纯视觉特效：尘土、冲击环
+    this.fx = []; // 纯视觉特效：尘土、冲击波、粒子、残影、拟声字……
+    this.shake = 0; // 屏幕震动幅度（像素），自己衰减
+    this.flash = 0; // 全屏闪光亮度（0..1），自己衰减
+    this.flashCol = '255,255,255';
+    this.ghostT = 0; // >0 时每隔一小会儿留一个残影
+    this.ghostCd = 0;
+    this.trailT = 0; // 喷气/螺旋桨飞行时的尾迹发射计时
     this.whirT = 0;
     const baseY = H - 56;
     this.startY = baseY;
@@ -308,6 +314,8 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       else if (dd.x >= W) dd.x -= W;
     }
 
+    this.trailFx(dt);
+
     if (dd.state === 'normal') {
       this.pickups();
       if (dd.state === 'normal') this.hazards();
@@ -366,10 +374,134 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     this.fx.push({ k: 'ring', x: x, y: y, r: 6, vx: 0, vy: 0, life: 0.36, max: 0.36 });
   };
 
-  P.bounce = function (v) {
+  // ---------- 道具触发瞬间的特效（全是纯视觉，用 Math.random，不碰会影响关卡生成的种子随机数）----------
+  const rnd = Math.random;
+  const TAU = Math.PI * 2;
+  P.addFx = function (o) {
+    o.max = o.life;
+    if (this.fx.length < 360) this.fx.push(o);
+  };
+  // 冲击波：扁椭圆（flat 小）或正圆（flat=1）向外扩，越扩越慢、越细
+  P.shockwave = function (x, y, o) {
+    this.addFx({ k: 'shock', x: x, y: y, r: 6, vr: o.vr, drag: 7, w: o.w, flat: o.flat === undefined ? 0.3 : o.flat, col: o.col, delay: o.delay || 0, life: o.life });
+  };
+  // 一把粒子（星星/圆点）朝 a0..a1 角度范围喷出去，带重力
+  P.burst = function (x, y, n, o) {
+    for (let i = 0; i < n; i++) {
+      const a = o.a0 + (o.a1 - o.a0) * rnd();
+      const sp = o.s0 + (o.s1 - o.s0) * rnd();
+      this.addFx({
+        k: 'part',
+        shape: o.shapes[(rnd() * o.shapes.length) | 0],
+        x: x + (rnd() - 0.5) * (o.spread || 0),
+        y: y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        g: o.g,
+        drag: o.drag,
+        r: o.r0 + (o.r1 - o.r0) * rnd(),
+        rot: rnd() * TAU,
+        vr: (rnd() - 0.5) * 16,
+        col: o.cols[(rnd() * o.cols.length) | 0],
+        life: o.l0 + (o.l1 - o.l0) * rnd(),
+      });
+    }
+  };
+  P.popText = function (x, y, txt, size, col) {
+    this.addFx({ k: 'text', x: x, y: y, txt: txt, size: size, col: col, rot: (rnd() - 0.5) * 0.3, life: 0.8 });
+  };
+  P.addGhost = function () {
     const dd = this.dd;
-    // 速度从“下落”突变成“上冲”，肚子跟不上，先被甩下去再弹回来
-    dd.bellyV += (v + dd.vy) * C.BELLY_GAIN;
+    this.addFx({ k: 'ghost', d: Object.assign({}, dd), x: dd.x, y: dd.y, life: 0.3 });
+  };
+
+  // 道具被用上的那一瞬间：弹簧 / 蹦床在脚下 (x, y) 炸开；螺旋桨帽 / 喷气背包在身上炸开
+  P.itemFx = function (type, x, y) {
+    const PI = Math.PI;
+    if (type === 'spring') {
+      const cols = ['#ffd93b', '#fff6a8', '#ff7a5c', '#ffffff'];
+      this.shockwave(x, y - 2, { vr: 400, w: 5, col: '255,236,120', life: 0.4 });
+      this.shockwave(x, y - 2, { vr: 300, w: 3, col: '255,255,255', life: 0.34, delay: 0.05 });
+      this.addFx({ k: 'beam', x: x, y: y, w: 26, h: 150, col: '255,230,110', life: 0.3 });
+      this.addFx({ k: 'rays', x: x, y: y - 4, n: 9, a0: -PI * 0.92, a1: -PI * 0.08, R: 84, w: 3.6, col: '255,206,40', life: 0.34 });
+      this.burst(x, y - 6, 12, { a0: -PI * 0.95, a1: -PI * 0.05, s0: 140, s1: 430, g: 900, drag: 1.2, r0: 4, r1: 7, l0: 0.5, l1: 0.85, spread: 16, shapes: ['star', 'star', 'dot'], cols: cols });
+      this.popText(x, y - 40, 'BOING!', 24, '#ffd93b');
+      this.shake = Math.max(this.shake, 3.5);
+      this.ghostT = 0.3;
+    } else if (type === 'tramp') {
+      const cols = ['#ff5c5c', '#ffd93b', '#ffffff', '#7be0ff', '#ff8fd0'];
+      const rc = ['255,92,92', '255,217,59', '255,255,255'];
+      for (let k = 0; k < 3; k++) this.shockwave(x, y - 2, { vr: 600 - k * 70, w: 7.5 - k * 1.8, col: rc[k], life: 0.5 + k * 0.04, delay: k * 0.06 });
+      this.addFx({ k: 'beam', x: x, y: y, w: 46, h: 290, col: '255,170,160', life: 0.38 });
+      this.addFx({ k: 'glow', x: x, y: y - 14, r: 78, col: '255,255,255', life: 0.24 });
+      this.addFx({ k: 'rays', x: x, y: y - 6, n: 15, a0: -PI * 0.99, a1: -PI * 0.01, R: 140, w: 4.4, col: '255,255,255', life: 0.42 });
+      this.addFx({ k: 'rays', x: x, y: y - 6, n: 11, a0: -PI * 0.95, a1: -PI * 0.05, R: 100, w: 6, col: '255,92,92', life: 0.36 });
+      this.burst(x, y - 8, 22, { a0: -PI * 0.97, a1: -PI * 0.03, s0: 230, s1: 660, g: 1000, drag: 1.1, r0: 4.5, r1: 8, l0: 0.6, l1: 1.0, spread: 24, shapes: ['star', 'star', 'dot'], cols: cols });
+      this.popText(x, y - 48, 'SUPER BOING!!', 28, '#ff6b6b');
+      this.shake = Math.max(this.shake, 8);
+      this.flash = Math.max(this.flash, 0.3);
+      this.flashCol = '255,255,255';
+      this.ghostT = 0.5;
+    } else if (type === 'prop') {
+      const cols = ['#7fd0ff', '#ffd93b', '#ffffff', '#ff7a7a'];
+      this.shockwave(x, y, { vr: 320, w: 4.5, col: '127,208,255', flat: 1, life: 0.4 });
+      this.shockwave(x, y, { vr: 230, w: 3, col: '255,255,255', flat: 1, life: 0.34, delay: 0.06 });
+      this.addFx({ k: 'glow', x: x, y: y, r: 54, col: '190,235,255', life: 0.22 });
+      this.addFx({ k: 'rays', x: x, y: y, n: 12, a0: 0, a1: (TAU * 11) / 12, R: 66, w: 3.2, col: '150,222,255', life: 0.34 });
+      this.burst(x, y, 16, { a0: 0, a1: TAU, s0: 90, s1: 280, g: 140, drag: 2.2, r0: 3.5, r1: 6.5, l0: 0.5, l1: 0.8, spread: 8, shapes: ['dot', 'star'], cols: cols });
+      this.popText(x, y - 48, 'WHIRR!', 22, '#7fd0ff');
+      this.shake = Math.max(this.shake, 2.5);
+      this.flash = Math.max(this.flash, 0.12);
+      this.flashCol = '200,235,255';
+      this.ghostT = 0.3;
+    } else if (type === 'jet') {
+      const cols = ['#ffb02e', '#ff6a3d', '#fff29a', '#ffffff'];
+      this.shockwave(x, y + 22, { vr: 520, w: 7, col: '255,176,46', life: 0.46 });
+      this.shockwave(x, y, { vr: 340, w: 4.5, col: '255,106,61', flat: 1, life: 0.4, delay: 0.03 });
+      this.shockwave(x, y, { vr: 250, w: 3, col: '255,255,255', flat: 1, life: 0.34, delay: 0.08 });
+      this.addFx({ k: 'glow', x: x, y: y + 6, r: 72, col: '255,200,110', life: 0.26 });
+      this.addFx({ k: 'rays', x: x, y: y, n: 14, a0: 0, a1: (TAU * 13) / 14, R: 82, w: 3.6, col: '255,176,46', life: 0.36 });
+      this.burst(x, y + 16, 12, { a0: PI * 0.12, a1: PI * 0.88, s0: 160, s1: 460, g: 300, drag: 1.6, r0: 5, r1: 9, l0: 0.35, l1: 0.6, spread: 18, shapes: ['fire'], cols: cols });
+      this.burst(x, y, 12, { a0: 0, a1: TAU, s0: 120, s1: 360, g: 500, drag: 1.4, r0: 4, r1: 7, l0: 0.5, l1: 0.85, spread: 10, shapes: ['star', 'dot'], cols: cols });
+      this.popText(x, y - 52, 'BOOM!', 26, '#ff8a3d');
+      this.shake = Math.max(this.shake, 6);
+      this.flash = Math.max(this.flash, 0.26);
+      this.flashCol = '255,200,120';
+      this.ghostT = 0.4;
+    }
+  };
+
+  // 每步都跑的“持续”特效：残影、喷气背包的火焰尾迹、螺旋桨扇出来的风
+  P.trailFx = function (dt) {
+    const dd = this.dd;
+    if (this.ghostT > 0) {
+      this.ghostT -= dt;
+      this.ghostCd -= dt;
+      if (this.ghostCd <= 0) {
+        this.ghostCd = 0.034;
+        this.addGhost();
+      }
+    }
+    if (dd.state !== 'jetpack' && dd.state !== 'propeller') return;
+    if (this.fx.length > 260) return;
+    this.trailT -= dt;
+    if (this.trailT > 0) return;
+    if (dd.state === 'jetpack') {
+      this.trailT = 0.022;
+      for (const s of [-1, 1]) {
+        this.addFx({ k: 'fire', x: dd.x + s * 12.5 + (rnd() - 0.5) * 4, y: dd.y - 8, vx: (rnd() - 0.5) * 50, vy: 160 + rnd() * 170, r: 5 + rnd() * 3.5, life: 0.26 + rnd() * 0.2 });
+      }
+    } else {
+      this.trailT = 0.06;
+      const s = rnd() < 0.5 ? -1 : 1;
+      this.addFx({ k: 'streak', x: dd.x + s * (14 + rnd() * 14), y: dd.y - 70 - rnd() * 20, vx: s * 10, vy: 230 + rnd() * 120, life: 0.24 });
+    }
+  };
+
+  P.bounce = function (v, kick) {
+    const dd = this.dd;
+    // 速度从“下落”突变成“上冲”，肚子跟不上，先被甩下去再弹回来（kick 是额外放大的力度）
+    dd.bellyV += (v + dd.vy) * C.BELLY_GAIN * (kick || 1);
     dd.vy = -v;
     dd.bounceT = 0;
   };
@@ -405,11 +537,12 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       p.dipV += 200;
       this.puff(dd.x, best.sy, 6, 120);
       this.ring(dd.x, best.sy);
+      this.itemFx(best.it.type, dd.x, best.sy);
       if (best.it.type === 'spring') {
-        this.bounce(C.SPRING_V);
+        this.bounce(C.SPRING_V, 1.5);
         this.sfx('spring');
       } else {
-        this.bounce(C.TRAMP_V);
+        this.bounce(C.TRAMP_V, 2);
         this.sfx('tramp');
       }
       return;
@@ -451,6 +584,8 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         dd.stateT = 0;
         dd.vy = Math.min(dd.vy, -300);
         this.whirT = 0;
+        this.trailT = 0;
+        this.itemFx(it.type, dd.x, dd.y - 26);
         this.sfx('pickup');
         return;
       }
@@ -597,8 +732,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     }
   };
 
-  // 平台移动、怪物、子弹、碎片等不涉及小橘的更新
+  // 平台移动、怪物、子弹、碎片等不涉及小海星的更新
   P.stepWorld = function (dt) {
+    this.shake = this.shake > 0.05 ? this.shake * Math.exp(-13 * dt) : 0;
+    this.flash = this.flash > 0.004 ? Math.max(0, this.flash - dt * 2.4) : 0;
     const camY = this.camY;
     const H = this.H;
     const bottom = camY + H;
@@ -696,14 +833,32 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
     for (let i = this.fx.length - 1; i >= 0; i--) {
       const f = this.fx[i];
+      if (f.delay > 0) {
+        f.delay -= dt;
+        continue;
+      }
       f.life -= dt;
       if (f.k === 'puff') {
         f.vx *= Math.exp(-3.5 * dt);
         f.vy *= Math.exp(-2.5 * dt);
         f.x += f.vx * dt;
         f.y += f.vy * dt;
-      } else {
+      } else if (f.k === 'ring') {
         f.r += 150 * dt * Math.max(0.15, f.life / f.max);
+      } else if (f.k === 'shock') {
+        f.vr *= Math.exp(-f.drag * dt);
+        f.r += f.vr * dt;
+      } else if (f.k === 'part') {
+        const d = Math.exp(-f.drag * dt);
+        f.vx *= d;
+        f.vy = f.vy * d + f.g * dt;
+        f.x += f.vx * dt;
+        f.y += f.vy * dt;
+        f.rot += f.vr * dt;
+      } else if (f.k === 'fire' || f.k === 'streak') {
+        f.vy *= Math.exp(-1.2 * dt);
+        f.x += f.vx * dt;
+        f.y += f.vy * dt;
       }
       if (f.life <= 0) this.fx.splice(i, 1);
     }

@@ -54,19 +54,20 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   function background(ctx, camY) {
     const v = DJ.view;
     const cell = 20;
+    const m = 14; // 多画一圈边距：屏幕震动时画面会偏移，不能露出底下的旧画面
     ctx.fillStyle = '#f7f4e1';
-    ctx.fillRect(v.x0 - 2, v.y0 - 2, v.x1 - v.x0 + 4, v.y1 - v.y0 + 4);
+    ctx.fillRect(v.x0 - m, v.y0 - m, v.x1 - v.x0 + 2 * m, v.y1 - v.y0 + 2 * m);
     ctx.beginPath();
-    for (let x = Math.floor(v.x0 / cell) * cell; x <= v.x1; x += cell) {
-      ctx.moveTo(x, v.y0);
-      ctx.lineTo(x, v.y1);
+    for (let x = Math.floor((v.x0 - m) / cell) * cell; x <= v.x1 + m; x += cell) {
+      ctx.moveTo(x, v.y0 - m);
+      ctx.lineTo(x, v.y1 + m);
     }
-    const n0 = Math.floor((camY + v.y0) / cell);
-    const n1 = Math.ceil((camY + v.y1) / cell);
+    const n0 = Math.floor((camY + v.y0 - m) / cell);
+    const n1 = Math.ceil((camY + v.y1 + m) / cell);
     for (let n = n0; n <= n1; n++) {
       const y = n * cell - camY;
-      ctx.moveTo(v.x0, y);
-      ctx.lineTo(v.x1, y);
+      ctx.moveTo(v.x0 - m, y);
+      ctx.lineTo(v.x1 + m, y);
     }
     ctx.lineWidth = Math.max(v.px * 1.3, 0.5);
     ctx.strokeStyle = '#c5dcd8';
@@ -160,7 +161,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     if (it.type === 'spring') {
-      const ext = it.fired ? Math.sin(clamp(it.t / 0.3, 0, 1) * Math.PI) * 14 : 0;
+      const ext = it.fired ? Math.sin(clamp(it.t / 0.3, 0, 1) * Math.PI) * 22 : 0;
       const h = 12 + ext;
       ctx.translate(x, y);
       // 弹簧圈
@@ -183,7 +184,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       rr(ctx, -8, -1.5, 16, 3, 1.5);
       fillStroke(ctx, '#9aa3ab', 1.4);
     } else if (it.type === 'tramp') {
-      const ext = it.fired ? Math.sin(clamp(it.t / 0.35, 0, 1) * Math.PI) * 16 : 0;
+      const ext = it.fired ? Math.sin(clamp(it.t / 0.35, 0, 1) * Math.PI) * 26 : 0;
       ctx.translate(x, y);
       const h = 8 + ext;
       for (const sx of [-14, 14]) {
@@ -248,41 +249,116 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     return (DJ.clock !== undefined ? DJ.clock : Date.now() / 1000) || 0;
   }
 
-  // ---------- 主角：小橘（原创角色：圆滚滚的橘色小家伙，头顶一株小芽，正面朝前，张嘴吐墨水球）----------
+  // ---------- 主角：小海星（原创角色：绿色的肥肥海星，五条胖手臂，正面朝前，张嘴吐泡泡球）----------
   // 全部姿态量（肚子、肚皮、手臂、拉伸、脸朝向）都由 world.js 里的弹簧/指数平滑产生，这里只负责画。
-  function leaf(ctx, s, len, wid) {
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.quadraticCurveTo(s * len * 0.35, -wid, s * len, -wid * 0.35);
-    ctx.quadraticCurveTo(s * len * 0.55, wid * 0.7, 0, 0);
-    ctx.closePath();
-    fillStroke(ctx, '#86d24a', 1.7);
-    ctx.beginPath();
-    ctx.moveTo(s * 2, -1);
-    ctx.lineTo(s * len * 0.7, -wid * 0.3);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(40,100,20,0.6)';
-    ctx.stroke();
+  // 身体是“一整块”：五条胖手臂 + 中心圆盘用同一条路径、同样的线宽描一遍外轮廓再描一遍填色，
+  // 所以手臂和身体之间没有多余的内部线条，像一块软糖。下面两条手臂当腿，两侧的手臂当手。
+  const OUT_W = 2.3; // 外轮廓粗细
+  const ARM_ROOT = 11.5; // 手臂根部的半径（越大越肥）
+  const ARM_TIP = 6.6; // 手臂尖端的半径（比根部细，才有海星尖尖的手臂）
+  const ARM_LEN = 24; // 手臂从中心伸出去的长度
+  const DISC = 13; // 中心圆盘的半径，脸画在这上面
+  const FOOT_Y = -7.8; // 脚尖圆心的高度，让描边底部刚好落在平台表面
+
+  // 把当前姿态换算成各个部位的位置（身体、手、脚、头顶那条手臂），画角色和画残影共用
+  function starGeom(dd) {
+    const st = dd.state;
+    const vy = dd.vy;
+    // 腿的长度：落地压缩 -> 起跳伸长 -> 顶点收起（用缓动曲线，不是分段直线）
+    let L;
+    if (st === 'dead') L = 10;
+    else if (dd.bounceT < 0.07) L = 5 + 3 * (dd.bounceT / 0.07);
+    else if (vy < -150) L = Math.min(16, 8 + (dd.bounceT - 0.07) * 70);
+    else if (vy < 150) L = 16 - 7 * clamp((vy + 150) / 300, 0, 1);
+    else L = 9;
+
+    // 果冻身体：肚子弹簧 belly（>0 又宽又扁，<0 又窄又高）+ 空中拉伸 stretch
+    const bd = clamp(dd.belly || 0, -1, 1);
+    const b2 = dd.b2 === undefined ? bd : dd.b2;
+    const stretch = dd.stretch || 0;
+    const sxB = (1 + 0.5 * bd) * (1 - stretch * 0.45);
+    const syB = (1 - 0.42 * bd) * (1 + stretch * 0.6);
+    const sxA = 1 + (sxB - 1) * 0.65; // 手臂左右伸缩得比圆盘克制一点，不然压扁时会张得太开
+    const v = (0.81 * (ARM_LEN - 2) + (L - 9) * 0.55) * syB; // 脚尖到身体中心的垂直距离：脚固定踩在地上，身体被腿撑起来
+    const by = FOOT_Y - v;
+    const look = dd.look === undefined ? 0.5 : dd.look;
+    const pose = dd.armPose === undefined ? clamp(vy / 350, -1, 1) : dd.armPose;
+    const shooting = st !== 'dead' && dd.shootT < 0.22;
+    const aim = dd.aim === undefined ? -Math.PI / 2 : dd.aim;
+    const shootK = st === 'dead' ? 0 : dd.shootT < 0.2 ? 1 : clamp(1 - (dd.shootT - 0.2) / 0.14, 0, 1);
+
+    // 头顶那条手臂：跟着水平速度往后甩，随肚子晃
+    const sway = Math.sin((dd.t || 0) * 7) * 0.07 - clamp((dd.vx || 0) / 900, -0.3, 0.3) - b2 * 0.1;
+    const topLen = (ARM_LEN + 1) * syB;
+    const top = [Math.sin(sway) * topLen, by - Math.cos(sway) * topLen];
+
+    // 两侧的手：姿态由 armPose 平滑决定（高举 -> 斜上 -> 微垂），随肚皮晃动甩一甩；射击时那一侧的手指向瞄准方向
+    const armSide = Math.cos(aim) >= 0 ? 1 : -1;
+    const sides = [];
+    for (const s of [-1, 1]) {
+      // 肚皮被压扁（b2>0）时手臂往外摊开，像拍扁的海星；拉长（b2<0）时往上收。
+      // 角度限制在 -1.12 以内：再往上就和头顶那条手臂叠成一团了
+      const th = clamp(lerp(-1.05, 0.4, (pose + 1) / 2) + b2 * 0.45, -1.12, 0.7);
+      let dx = s * Math.cos(th);
+      let dy = Math.sin(th);
+      let len = ARM_LEN;
+      if (shooting && s === armSide) {
+        dx = lerp(dx, Math.cos(aim), shootK);
+        dy = lerp(dy, Math.sin(aim), shootK);
+        len = ARM_LEN + 3 * shootK;
+      }
+      const n = Math.hypot(dx, dy) || 1;
+      sides.push([(dx / n) * len * sxA, by + (dy / n) * len * syB]);
+    }
+    // 下面两条手臂当腿：脚间距固定，腿的伸缩体现在身体被撑高
+    const fx = 0.59 * (ARM_LEN - 2) * sxA;
+    const legs = [
+      [-fx, FOOT_Y],
+      [fx, FOOT_Y],
+    ];
+    return { st: st, vy: vy, L: L, sxB: sxB, syB: syB, b2: b2, by: by, look: look, pose: pose, shootK: shootK, aim: aim, top: top, sides: sides, legs: legs };
   }
 
-  // 圆润的小短手：粗圆头线条 + 手尖的小圆球
-  function plumpArm(ctx, x0, y0, dx, dy, len, rad) {
-    const n = Math.hypot(dx, dy) || 1;
-    const ex = x0 + (dx / n) * len;
-    const ey = y0 + (dy / n) * len;
+  // 整个身体的路径：五条根粗尖细的胖手臂（一串渐变半径的圆叠出来）+ 中心圆盘，全在同一条路径里，
+  // extra 是外扩的像素数（画外轮廓时用），整条路径一次 fill 出来就是一整块没有内部线条的剪影
+  function starPath(ctx, g, extra) {
     ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(ex, ey);
-    ctx.lineWidth = rad * 2 + 2;
-    ctx.strokeStyle = INK;
-    ctx.stroke();
-    ctx.lineWidth = rad * 2 - 2.2;
-    ctx.strokeStyle = '#f0733f';
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(ex, ey, rad - 0.2, 0, TAU);
-    fillStroke(ctx, '#f58a4a', 1.9);
+    const limbs = [
+      [g.top, ARM_TIP + 0.5],
+      [g.sides[0], ARM_TIP],
+      [g.sides[1], ARM_TIP],
+      [g.legs[0], ARM_TIP + 1.2],
+      [g.legs[1], ARM_TIP + 1.2],
+    ];
+    const N = 7;
+    for (let i = 0; i < limbs.length; i++) {
+      const tx = limbs[i][0][0];
+      const ty = limbs[i][0][1];
+      const rt = limbs[i][1];
+      for (let k = 1; k <= N; k++) {
+        const t = k / N;
+        const r = lerp(ARM_ROOT, rt, t) + extra;
+        const cx = tx * t;
+        const cy = g.by + (ty - g.by) * t;
+        ctx.moveTo(cx + r, cy);
+        ctx.arc(cx, cy, r, 0, TAU);
+      }
+    }
+    ctx.moveTo(DISC * g.sxB + extra, g.by);
+    ctx.ellipse(0, g.by, DISC * g.sxB + extra, DISC * g.syB + extra, 0, 0, TAU);
   }
+
+  // 残影：只画一层半透明的绿色剪影（一次 fill，不会因为部位重叠而叠深）
+  function starGhost(ctx, d, x, y, alpha) {
+    ctx.save();
+    ctx.translate(x, y);
+    starPath(ctx, starGeom(d), 1.5);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#b6f783';
+    ctx.fill();
+    ctx.restore();
+  }
+  DJ.drawStarGhost = starGhost;
 
   function doodlerAt(ctx, dd, x, y) {
     const st = dd.state;
@@ -301,119 +377,51 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
-    const vy = dd.vy;
-    // 腿的长度：落地压缩 -> 起跳伸长 -> 顶点收起（用缓动曲线，不是分段直线）
-    let L;
-    if (st === 'dead') L = 10;
-    else if (dd.bounceT < 0.07) L = 5 + 3 * (dd.bounceT / 0.07);
-    else if (vy < -150) L = Math.min(16, 8 + (dd.bounceT - 0.07) * 70);
-    else if (vy < 150) L = 16 - 7 * clamp((vy + 150) / 300, 0, 1);
-    else L = 9;
+    const g = starGeom(dd);
+    const sxB = g.sxB;
+    const syB = g.syB;
+    const by = g.by;
+    const b2 = g.b2;
+    const look = g.look;
+    const pose = g.pose;
+    const aim = g.aim;
+    const shootK = g.shootK;
+    const topY = g.top[1] - ARM_TIP - OUT_W; // 头顶最高点（含描边）
 
-    // ---- 果冻身体：肚子弹簧 belly（>0 又宽又扁，<0 又窄又高）+ 空中拉伸 stretch ----
-    const bd = clamp(dd.belly || 0, -1, 1);
-    const b2 = dd.b2 === undefined ? bd : dd.b2;
-    const stretch = dd.stretch || 0;
-    const sxB = (1 + 0.5 * bd) * (1 - stretch * 0.45);
-    const syB = (1 - 0.42 * bd) * (1 + stretch * 0.6);
-    const RX = 21 * sxB; // 直接改椭圆半径而不是 ctx.scale，描边粗细才不会被拉变形
-    const RY = 20.5 * syB;
-    const pivY = -(L + 1); // 身体底部，腿从这里长出来
-    const by = pivY - RY; // 身体中心
-    const topY = by - RY;
-    const look = dd.look === undefined ? 0.5 : dd.look;
-    const pose = dd.armPose === undefined ? clamp(vy / 350, -1, 1) : dd.armPose;
-    const shooting = st !== 'dead' && dd.shootT < 0.22;
-    const aim = dd.aim === undefined ? -Math.PI / 2 : dd.aim;
-    const shootK = st === 'dead' ? 0 : dd.shootT < 0.2 ? 1 : clamp(1 - (dd.shootT - 0.2) / 0.14, 0, 1);
+    // 身体：先整块描黑边，再整块填上渐变的绿色
+    starPath(ctx, g, OUT_W);
+    ctx.fillStyle = INK;
+    ctx.fill();
+    const bg = ctx.createRadialGradient(-7 * sxB, by - 12 * syB, 3, 0, by, 42 * Math.max(sxB, syB));
+    bg.addColorStop(0, '#c9f58f');
+    bg.addColorStop(0.5, '#82d54c');
+    bg.addColorStop(1, '#3f9d3a');
+    starPath(ctx, g, 0);
+    ctx.fillStyle = bg;
+    ctx.fill();
 
-    // 喷气背包（在身体两侧偏后）
-    if (st === 'jetpack') {
-      const fl = 14 + Math.sin(dd.t * 60) * 5 + Math.random() * 3;
-      for (const jx of [-(RX + 6), RX - 5]) {
-        rr(ctx, jx, by - 10, 11, 26, 4);
-        fillStroke(ctx, '#9db4c9', 2);
-        rr(ctx, jx, by - 10, 11, 7, 3);
-        fillStroke(ctx, '#e8483c', 1.6);
+    // 海星特有的小颗粒：沿着每条手臂排两三个浅色小点
+    ctx.fillStyle = 'rgba(225,255,175,0.9)';
+    const tips = [g.top, g.sides[0], g.sides[1], g.legs[0], g.legs[1]];
+    for (let i = 0; i < tips.length; i++) {
+      const tx = tips[i][0];
+      const ty = tips[i][1];
+      const dots = [
+        [0.55, 2.1],
+        [0.76, 1.7],
+        [0.94, 1.2],
+      ];
+      for (let j = 0; j < dots.length; j++) {
         ctx.beginPath();
-        ctx.moveTo(jx + 1, by + 16);
-        ctx.lineTo(jx + 5.5, by + 16 + fl);
-        ctx.lineTo(jx + 10, by + 16);
-        ctx.closePath();
-        fillStroke(ctx, '#ffb02e', 1.4);
-        ctx.beginPath();
-        ctx.moveTo(jx + 3, by + 16);
-        ctx.lineTo(jx + 5.5, by + 16 + fl * 0.55);
-        ctx.lineTo(jx + 8, by + 16);
-        ctx.closePath();
-        ctx.fillStyle = '#fff29a';
+        ctx.arc(tx * dots[j][0], by + (ty - by) * dots[j][0], dots[j][1], 0, TAU);
         ctx.fill();
       }
     }
 
-    // 腿：短而圆润的小粗腿 + 大脚丫
-    for (const s of [-1, 1]) {
-      const lx = s * 8 * sxB;
-      rr(ctx, lx - 4.9, pivY - 3, 9.8, L + 2.2, 4.7);
-      fillStroke(ctx, '#e3683f', 2);
-      ctx.beginPath();
-      ctx.ellipse(lx + s * 1.6, -2.7, 8.6, 3.9, 0, 0, TAU);
-      fillStroke(ctx, '#c9502f', 2);
-    }
-
-    // 小手：姿态由 armPose 平滑决定（高举 -> 平伸 -> 下垂），随肚皮晃动甩一甩；射击时那一侧的手指向瞄准方向
-    const armSide = Math.cos(aim) >= 0 ? 1 : -1;
-    for (const s of [-1, 1]) {
-      const sx0 = s * (RX - 4);
-      const sy0 = by + 3 * syB;
-      let th = lerp(-0.95, 0.85, (pose + 1) / 2) - b2 * 0.55;
-      let dx = s * Math.cos(th);
-      let dy = Math.sin(th);
-      let len = 11;
-      if (shooting && s === armSide) {
-        dx = lerp(dx, Math.cos(aim), shootK);
-        dy = lerp(dy, Math.sin(aim), shootK);
-        len = 13;
-      }
-      plumpArm(ctx, sx0, sy0, dx, dy, len, 5.6);
-    }
-
-    // 头顶的小芽（螺旋桨帽出现时收起来）：随速度和肚子晃动飘
-    if (st !== 'propeller') {
-      ctx.save();
-      ctx.translate(0, topY + 1);
-      const sway = Math.sin(dd.t * 7) * 0.1 + clamp(vy / 1600, -0.5, 0.5) - b2 * 0.16;
-      ctx.rotate(sway);
-      ctx.beginPath();
-      ctx.moveTo(0, 2);
-      ctx.quadraticCurveTo(1.5, -5, 0, -9);
-      ctx.lineWidth = 2.4;
-      ctx.strokeStyle = INK;
-      ctx.stroke();
-      ctx.translate(0, -8);
-      const flap = clamp(vy / 1800, -0.4, 0.4) + b2 * 0.12;
-      ctx.save();
-      ctx.rotate(-0.25 - flap);
-      leaf(ctx, -1, 13, 8);
-      ctx.restore();
-      ctx.save();
-      ctx.rotate(0.25 + flap);
-      leaf(ctx, 1, 13, 8);
-      ctx.restore();
-      ctx.restore();
-    }
-
-    // 身体
-    const bg = ctx.createRadialGradient(-6 * sxB, by - 9 * syB, 3, 0, by, 28 * Math.max(sxB, syB));
-    bg.addColorStop(0, '#ffc98a');
-    bg.addColorStop(1, '#f06b3d');
-    ctx.beginPath();
-    ctx.ellipse(0, by, RX, RY, 0, 0, TAU);
-    fillStroke(ctx, bg, 2.3);
     // 肚皮：挂在第二层弹簧上，比身体晃得更晚、更大，叠出波浪感
     ctx.beginPath();
-    ctx.ellipse(0, by + 8 * syB + b2 * 6.5, 12.5 * sxB * (1 + b2 * 0.28), Math.max(3, 9.5 * syB * (1 - b2 * 0.22)), 0, 0, TAU);
-    ctx.fillStyle = 'rgba(255,238,200,0.82)';
+    ctx.ellipse(0, by + 8 * syB + b2 * 6, 10.5 * sxB * (1 + b2 * 0.28), Math.max(3, 7 * syB * (1 - b2 * 0.22)), 0, 0, TAU);
+    ctx.fillStyle = 'rgba(240,255,210,0.8)';
     ctx.fill();
 
     // 脸：随朝向做视差（脸比身体偏得更多）
@@ -447,7 +455,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         ctx.fill();
       }
     }
-    ctx.fillStyle = 'rgba(255,90,90,0.38)';
+    ctx.fillStyle = 'rgba(255,110,130,0.42)';
     for (const bx of [-13 + f, 13 + f]) {
       const q = P(bx, 3.5);
       ctx.beginPath();
@@ -484,24 +492,50 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.stroke();
     }
 
-    // 螺旋桨帽
+    // 喷气背包：两个油罐绑在肚子两侧（画在身体前面，不然会被胖手臂挡住），火焰朝下喷
+    if (st === 'jetpack') {
+      const fl = 14 + Math.sin(dd.t * 60) * 5 + Math.random() * 3;
+      for (const jx of [-23.5 * sxB, 14.5 * sxB]) {
+        const jy = by - 6;
+        rr(ctx, jx, jy, 9, 24, 4);
+        fillStroke(ctx, '#9db4c9', 2);
+        rr(ctx, jx, jy, 9, 7, 3);
+        fillStroke(ctx, '#e8483c', 1.6);
+        ctx.beginPath();
+        ctx.moveTo(jx + 0.5, jy + 24);
+        ctx.lineTo(jx + 4.5, jy + 24 + fl);
+        ctx.lineTo(jx + 8.5, jy + 24);
+        ctx.closePath();
+        fillStroke(ctx, '#ffb02e', 1.4);
+        ctx.beginPath();
+        ctx.moveTo(jx + 2.5, jy + 24);
+        ctx.lineTo(jx + 4.5, jy + 24 + fl * 0.55);
+        ctx.lineTo(jx + 6.5, jy + 24);
+        ctx.closePath();
+        ctx.fillStyle = '#fff29a';
+        ctx.fill();
+      }
+    }
+
+    // 螺旋桨帽：扣在头顶那条手臂的尖上
     if (st === 'propeller') {
-      const hy = topY + 1.5;
+      const hx = g.top[0];
+      const hy = g.top[1] - 2;
       ctx.beginPath();
-      ctx.arc(0, hy, 11, Math.PI, TAU);
+      ctx.arc(hx, hy, 11, Math.PI, TAU);
       ctx.closePath();
       fillStroke(ctx, '#ef5b5b', 2);
-      rr(ctx, -12, hy - 1, 24, 4.4, 2);
+      rr(ctx, hx - 12, hy - 1, 24, 4.4, 2);
       fillStroke(ctx, '#3d86d6', 1.8);
       ctx.beginPath();
-      ctx.moveTo(0, hy - 11);
-      ctx.lineTo(0, hy - 15);
+      ctx.moveTo(hx, hy - 11);
+      ctx.lineTo(hx, hy - 15);
       ctx.lineWidth = 2.2;
       ctx.strokeStyle = INK;
       ctx.stroke();
       const bw = 15 * Math.abs(Math.cos(dd.t * 38));
       ctx.beginPath();
-      ctx.ellipse(0, hy - 16, Math.max(2, bw), 2.4, 0, 0, TAU);
+      ctx.ellipse(hx, hy - 16, Math.max(2, bw), 2.4, 0, 0, TAU);
       fillStroke(ctx, '#f2d24a', 1.6);
     }
 
@@ -509,7 +543,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     if (st === 'dead') {
       for (let i = 0; i < 3; i++) {
         const a = dd.t * 6 + (i * TAU) / 3;
-        star(ctx, Math.cos(a) * 17, topY - 6 + Math.sin(a) * 5, 6);
+        star(ctx, g.top[0] + Math.cos(a) * 20, topY - 4 + Math.sin(a) * 5, 6);
         fillStroke(ctx, '#ffd93b', 1.3);
       }
     }
@@ -751,11 +785,16 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   }
   DJ.drawHud = hud;
 
-  // ---------- 特效：落地尘土、弹簧冲击环、高速时的速度线 ----------
-  function effects(ctx, list) {
+  // ---------- 特效：落地尘土、冲击波、放射线、光柱、粒子、拟声字、残影 ----------
+  // 分两层画：后层（残影、光柱、冲击波、光晕、尘土）垫在怪物和主角后面；前层（放射线、粒子、火焰、拟声字）盖在最上面
+  const FRONT = { rays: 1, part: 1, fire: 1, streak: 1, text: 1 };
+  function effects(ctx, list, front) {
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
+      if ((FRONT[f.k] === 1) !== front) continue;
+      if (f.delay > 0) continue;
       const al = clamp(f.life / f.max, 0, 1);
+      const u = 1 - al;
       if (f.k === 'puff') {
         const r = f.r * (1 + (1 - al) * 1.3);
         ctx.globalAlpha = al * 0.7;
@@ -766,13 +805,132 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         ctx.lineWidth = 1.3;
         ctx.strokeStyle = 'rgba(95,110,100,0.55)';
         ctx.stroke();
-      } else {
+      } else if (f.k === 'ring') {
         ctx.globalAlpha = al * 0.6;
         ctx.beginPath();
         ctx.ellipse(f.x, f.y - 2, f.r * 1.6, f.r * 0.45, 0, 0, TAU);
         ctx.lineWidth = 2.2;
         ctx.strokeStyle = 'rgba(70,120,100,0.8)';
         ctx.stroke();
+      } else if (f.k === 'shock') {
+        ctx.globalAlpha = Math.min(1, al * 1.4);
+        ctx.beginPath();
+        ctx.ellipse(f.x, f.y - 2, f.r, f.r * f.flat, 0, 0, TAU);
+        ctx.lineWidth = f.w * (0.25 + 0.75 * al);
+        ctx.strokeStyle = 'rgb(' + f.col + ')';
+        ctx.stroke();
+      } else if (f.k === 'glow') {
+        const r = f.r * (0.6 + 0.8 * u);
+        const gr = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r);
+        gr.addColorStop(0, 'rgba(' + f.col + ',' + (al * 0.95).toFixed(3) + ')');
+        gr.addColorStop(1, 'rgba(' + f.col + ',0)');
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = gr;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, r, 0, TAU);
+        ctx.fill();
+      } else if (f.k === 'beam') {
+        // 光柱：从脚下往上射出去，越往上越细越淡，随时间收窄
+        const w = f.w * (0.3 + 0.7 * al);
+        const h = f.h * (0.55 + 0.45 * Math.min(1, u * 3));
+        const gr = ctx.createLinearGradient(0, f.y, 0, f.y - h);
+        gr.addColorStop(0, 'rgba(' + f.col + ',' + (al * 0.9).toFixed(3) + ')');
+        gr.addColorStop(1, 'rgba(' + f.col + ',0)');
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = gr;
+        ctx.beginPath();
+        ctx.moveTo(f.x - w / 2, f.y);
+        ctx.lineTo(f.x + w / 2, f.y);
+        ctx.lineTo(f.x + w * 0.18, f.y - h);
+        ctx.lineTo(f.x - w * 0.18, f.y - h);
+        ctx.closePath();
+        ctx.fill();
+        const gc = ctx.createLinearGradient(0, f.y, 0, f.y - h * 0.7);
+        gc.addColorStop(0, 'rgba(255,255,255,' + (al * 0.9).toFixed(3) + ')');
+        gc.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = gc;
+        ctx.beginPath();
+        ctx.moveTo(f.x - w * 0.2, f.y);
+        ctx.lineTo(f.x + w * 0.2, f.y);
+        ctx.lineTo(f.x + w * 0.05, f.y - h * 0.7);
+        ctx.lineTo(f.x - w * 0.05, f.y - h * 0.7);
+        ctx.closePath();
+        ctx.fill();
+      } else if (f.k === 'ghost') {
+        ctx.globalAlpha = 1;
+        if (f.d.state === 'normal' || f.d.state === 'propeller' || f.d.state === 'jetpack') DJ.drawStarGhost(ctx, f.d, f.x, f.y, al * 0.42);
+      } else if (f.k === 'rays') {
+        // 放射线：从中心往外“嗖”地射出去，射线先变长、后脱离中心
+        const e = 1 - Math.pow(1 - Math.min(1, u * 1.7), 2);
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'round';
+        ctx.lineWidth = f.w * (0.4 + 0.6 * al);
+        ctx.strokeStyle = 'rgba(' + f.col + ',' + Math.min(1, al * 1.2).toFixed(3) + ')';
+        ctx.beginPath();
+        for (let j = 0; j < f.n; j++) {
+          const t = f.n > 1 ? j / (f.n - 1) : 0.5;
+          const a = f.a0 + (f.a1 - f.a0) * t + Math.sin(j * 12.9) * 0.07;
+          const lenK = 0.72 + 0.28 * Math.sin(j * 7.3);
+          const rOut = f.R * e * lenK + 8;
+          const rIn = 8 + (rOut - 8) * u * u * 0.92;
+          ctx.moveTo(f.x + Math.cos(a) * rIn, f.y + Math.sin(a) * rIn);
+          ctx.lineTo(f.x + Math.cos(a) * rOut, f.y + Math.sin(a) * rOut);
+        }
+        ctx.stroke();
+      } else if (f.k === 'part') {
+        const sz = f.r * (0.55 + 0.45 * al);
+        ctx.globalAlpha = Math.min(1, al * 2.2);
+        if (f.shape === 'star') {
+          ctx.save();
+          ctx.translate(f.x, f.y);
+          ctx.rotate(f.rot);
+          star(ctx, 0, 0, sz * 1.5);
+          fillStroke(ctx, f.col, 1.3);
+          ctx.restore();
+        } else if (f.shape === 'fire') {
+          ctx.fillStyle = al > 0.66 ? '#ffdf4d' : al > 0.33 ? '#ff9f2e' : '#ff6a3d';
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, sz * 1.1, 0, TAU);
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, sz, 0, TAU);
+          fillStroke(ctx, f.col, 1.2);
+        }
+      } else if (f.k === 'fire') {
+        ctx.globalAlpha = Math.min(1, al * 1.8);
+        ctx.fillStyle = al > 0.66 ? '#ffdf4d' : al > 0.33 ? '#ff9f2e' : '#ff6a3d';
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.r * (0.35 + 0.65 * al), 0, TAU);
+        ctx.fill();
+      } else if (f.k === 'streak') {
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(255,255,255,' + (al * 0.85).toFixed(3) + ')';
+        ctx.beginPath();
+        ctx.moveTo(f.x, f.y);
+        ctx.lineTo(f.x - f.vx * 0.06, f.y - f.vy * 0.06);
+        ctx.stroke();
+      } else if (f.k === 'text') {
+        // 拟声字：弹性“蹦”出来（先放大过头再回弹），向上飘一点，最后淡出
+        const sc = u < 0.16 ? lerp(0.3, 1.3, u / 0.16) : u < 0.3 ? lerp(1.3, 1, (u - 0.16) / 0.14) : 1;
+        ctx.save();
+        ctx.globalAlpha = al < 0.25 ? al / 0.25 : 1;
+        ctx.font = DJ.font(f.size);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const tw = (ctx.measureText(f.txt).width * sc) / 2;
+        ctx.translate(clamp(f.x, tw + 6, W - tw - 6), f.y - 26 * (1 - Math.pow(1 - u, 3)));
+        ctx.rotate(f.rot);
+        ctx.scale(sc, sc);
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 5.5;
+        ctx.strokeStyle = INK;
+        ctx.strokeText(f.txt, 0, 0);
+        ctx.fillStyle = f.col;
+        ctx.fillText(f.txt, 0, 0);
+        ctx.restore();
       }
     }
     ctx.globalAlpha = 1;
@@ -802,6 +960,13 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const v = DJ.view;
     const a = alpha === undefined ? 1 : clamp(alpha, 0, 1);
     const cam = ix(g.pCam, g.camY, a);
+    // 屏幕震动：整个场景（背景和内容）一起抖，HUD 和留边不抖
+    const sh = g.shake || 0;
+    ctx.save();
+    if (sh > 0) {
+      const tt = performance_now();
+      ctx.translate(Math.sin(tt * 91) * sh, Math.cos(tt * 73) * sh * 0.8);
+    }
     background(ctx, cam);
     ctx.save();
     ctx.beginPath();
@@ -841,7 +1006,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       }
     }
     for (let i = 0; i < g.holes.length; i++) hole(ctx, g.holes[i]);
-    effects(ctx, g.fx);
+    effects(ctx, g.fx, false);
     for (let i = 0; i < g.monsters.length; i++) {
       const m = g.monsters[i];
       if (m.y > top - 40 && m.y < bot + 40) {
@@ -874,12 +1039,18 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     }
     speedLines(ctx, g.dd, ix(g.dd.px, g.dd.x, a), ix(g.dd.py, g.dd.y, a));
     doodler(ctx, g.dd, a);
+    effects(ctx, g.fx, true);
     ctx.restore();
+    ctx.restore();
+    if (g.flash > 0.004) {
+      ctx.fillStyle = 'rgba(' + (g.flashCol || '255,255,255') + ',' + clamp(g.flash, 0, 1).toFixed(3) + ')';
+      ctx.fillRect(v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0);
+    }
     letterbox(ctx);
     hud(ctx, Math.round(DJ.shownScore === undefined ? g.score : DJ.shownScore));
   };
 
-  // 菜单里用的假小橘
+  // 菜单里用的假小海星
   DJ.fakeDoodler = function (x, y, facing, vy, bounceT, t) {
     // 菜单里没有物理，用落地后的衰减余弦模拟肚子的 duang duang
     const belly = 0.75 * Math.exp(-bounceT * 3.2) * Math.cos(bounceT * 19.5);
