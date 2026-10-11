@@ -1,0 +1,76 @@
+plugins {
+    id 'com.android.application'
+}
+
+def appVersionCode = (project.findProperty('versionCode') ?: '1').toString().toInteger()
+def appVersionName = (project.findProperty('versionName') ?: '1.0.0').toString()
+
+android {
+    namespace 'io.github.capsopasme.tuya'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.github.capsopasme.tuya'
+        minSdk 30
+        targetSdk 35
+        versionCode appVersionCode
+        versionName appVersionName
+    }
+
+    // 签名：CI 里配置了 KEYSTORE_FILE 等环境变量就用你自己的密钥；
+    // 否则用仓库里的 fallback.keystore（公开的、非机密，只为保证每次构建签名一致，能覆盖安装升级）
+    signingConfigs {
+        release {
+            def ksPath = System.getenv('KEYSTORE_FILE')
+            if (ksPath) {
+                storeFile file(ksPath)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEY_PASSWORD')
+            } else {
+                storeFile rootProject.file('fallback.keystore')
+                storePassword 'android'
+                keyAlias 'tuya'
+                keyPassword 'android'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    // 游戏本体就是仓库根目录的 index.html / css / js，构建时复制进 assets，不另存一份
+    sourceSets {
+        main {
+            assets.srcDirs += layout.buildDirectory.dir('web').get().asFile
+        }
+    }
+}
+
+tasks.register('copyWeb', Copy) {
+    from(rootProject.projectDir.parentFile) {
+        include 'index.html', 'icon.svg', 'css/**', 'js/**'
+    }
+    into layout.buildDirectory.dir('web')
+}
+tasks.named('preBuild') {
+    dependsOn 'copyWeb'
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+}

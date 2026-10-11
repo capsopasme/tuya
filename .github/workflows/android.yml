@@ -1,0 +1,75 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # 打 tag 时要创建 Release
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 先跑一遍游戏逻辑模拟，关卡生成或物理改坏了会在这里挂掉
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Game logic simulation
+        run: node tools/sim.js
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "name=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 可选：仓库 Secrets 里配了 KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD 就用你自己的密钥签名，
+      # 没配就用 android/fallback.keystore
+      - name: Decode keystore (optional)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build release APK
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleRelease -PversionName=${{ steps.ver.outputs.name }} -PversionCode=${{ github.run_number }}
+
+      - name: Collect APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk "tuya-${{ steps.ver.outputs.name }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tuya-apk
+          path: tuya-*.apk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "tuya-${{ steps.ver.outputs.name }}.apk" \
+            --title "涂鸦蹦蹦 ${GITHUB_REF_NAME}" \
+            --notes "安卓 APK，直接安装即可（竖屏、离线、无需任何权限）。"

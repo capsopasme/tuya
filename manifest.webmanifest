@@ -1,0 +1,14 @@
+{
+  "name": "涂鸦蹦蹦",
+  "short_name": "涂鸦蹦蹦",
+  "description": "一路向上跳的手绘风小游戏：一路向上跳，躲开怪物，别掉下去。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#f7f4e1",
+  "theme_color": "#f7f4e1",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
