@@ -6,8 +6,9 @@
 
 **安卓 APK（推荐）**
 
-1. 打 tag 触发构建：`git tag v1.0.0 && git push origin v1.0.0`
-2. 等 Actions 里的 *Build Android APK* 跑完，在仓库 **Releases** 页下载 `tuya-1.0.0.apk` 安装。
+1. 发版：在 GitHub 网页上新建一个 Release（tag 填 `v1.2.0` 这种格式），或者命令行 `git tag v1.2.0 && git push origin v1.2.0`，两种都行。
+2. 等 Actions 里的 *Build Android APK* 跑完，APK 会自动挂到这个 Release 上，在 **Releases** 页下载 `tuya-1.2.0.apk` 安装。
+   某个版本没挂上 APK 时，可以在 Actions 里手动运行 *Build Android APK*，填上那个 tag 补发。
 3. 日常 push 到 main 也会构建，APK 在该次运行的 Artifacts 里。
 
 APK 是个全屏 WebView 外壳，游戏离线运行，不需要任何权限；倾斜用的是原生加速度计，返回键会先暂停/返回菜单再退出。
