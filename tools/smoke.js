@@ -33,13 +33,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await tapButton(page, 'sound');
     check(await page.evaluate(() => DJ.app.settings.sound === false), '声音开关生效');
     await tapButton(page, 'sound');
+    // 3D 主角开关：默认开（WebGL 可用时），切一下能关、再切回来
+    check(await page.evaluate(() => DJ.app.settings.hero3d === true && DJ.hero3d.active()), '3D 主角默认开启并且可用');
+    await tapButton(page, 'hero');
+    check(await page.evaluate(() => DJ.app.settings.hero3d === false && !DJ.hero3d.active()), '设置里能切回 2D 主角');
+    await tapButton(page, 'hero');
+    check(await page.evaluate(() => DJ.app.settings.hero3d === true && DJ.hero3d.active()), '再切回 3D 主角');
     await tapButton(page, 'back');
     check(await page.evaluate(() => DJ.ui.screen === 'menu'), '能从设置返回');
 
-    // 开始游戏
+    // 开始游戏（固定关卡种子，避免随机关卡让测试时好时坏）
+    await page.evaluate(() => DJ.seed(20261016));
     await tapButton(page, 'play');
     await sleep(200);
     check(await page.evaluate(() => DJ.ui.screen === 'play'), '点“开始游戏”进入游戏');
+    // 在起始平台那一排铺满平台当安全网：下面要左右猛倾斜，别让角色走出平台摔死导致后面的测试误报
+    await page.evaluate(() => {
+      const g = DJ.app.game;
+      for (let x = 29; x < 320; x += 52) g.addPlatform('normal', x, g.startY).vx = 0;
+    });
 
     // 起始平台上能持续弹跳（高度来回变化）
     const ys = [];
@@ -78,15 +90,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       c.dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 400, bubbles: true }));
     });
 
+    // 前面的倾斜测试可能让角色走出平台：放回屏幕里最低的一块安全平台上，后面的测试才不会因为意外摔死而失败
+    const rescued = await page.evaluate(() => {
+      const g = DJ.app.game;
+      if (g.phase !== 'play') return false;
+      let best = null;
+      for (const p of g.platforms) {
+        if (!p.dead && p.type !== 'brown' && p.y > g.camY + 120 && p.y < g.camY + g.H - 20 && (!best || p.y > best.y)) best = p;
+      }
+      if (best) {
+        g.dd.x = best.x;
+        g.dd.y = g.dd.prevY = best.y;
+        g.dd.vx = 0;
+        g.dd.vy = -DJ.C.JUMP_V;
+      }
+      return true;
+    });
+    check(rescued, '倾斜测试之后游戏仍在进行');
+
     // 点击屏幕射击
-    const before = await page.evaluate(() => DJ.app.game.bullets.length);
+    // （不能比较子弹个数：之前的子弹可能恰好在这期间飞出屏幕被回收）
+    await sleep(200); // 等射击冷却
     const p = await toScreen(page, 160, 150);
     await page.touchscreen.tap(p.x, p.y);
     await sleep(60);
-    const after = await page.evaluate(() => DJ.app.game.bullets.length);
-    check(after > before, '点击屏幕发射子弹（' + before + ' → ' + after + '）');
+    const shot = await page.evaluate(() => ({ t: DJ.app.game.dd.shootT, n: DJ.app.game.bullets.length }));
+    check(shot.t < 0.15 && shot.n > 0, '点击屏幕发射子弹（' + shot.t.toFixed(3) + 's 前刚射出，场上 ' + shot.n + ' 颗）');
 
-    // 暂停 / 继续
+    // 暂停 / 继续（顺便确认暂停画面不会因为停下那一刻的震屏一直抖）
+    await page.evaluate(() => (DJ.app.game.shake = 8));
     const pp = await toScreen(page, 296, 16);
     await page.touchscreen.tap(pp.x, pp.y);
     await sleep(100);
@@ -94,6 +126,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const yp = await page.evaluate(() => DJ.app.game.dd.y);
     await sleep(300);
     check((await page.evaluate(() => DJ.app.game.dd.y)) === yp, '暂停期间游戏不更新');
+    {
+      const a = await page.screenshot();
+      await sleep(120);
+      const b = await page.screenshot();
+      check(Buffer.compare(a, b) === 0, '暂停画面是静止的（不会继续震屏）');
+    }
     await page.screenshot({ path: path.join(OUT, 'pause.png') });
     await tapButton(page, 'resume');
     check(await page.evaluate(() => DJ.ui.screen === 'play'), '能继续游戏');
@@ -133,6 +171,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const sc = await page.evaluate(() => DJ.app.game.score);
     check(sc > 100, '喷气背包升空后分数增加（' + sc + '）');
     await page.screenshot({ path: path.join(OUT, 'jetpack.png') });
+
+    // 飞翼：直接进入飞翼状态，确认飞得飞快、路上的怪物被撞飞，结束后变回普通状态并带护盾
+    const sc0 = await page.evaluate(() => {
+      const g = DJ.app.game;
+      g.dd.state = 'wings';
+      g.dd.stateT = 0;
+      g.dd.vy = -400;
+      const m = g.makeMonster('blob', g.dd.x, g.dd.y - 160);
+      m.amp = 0;
+      g.monsters.push(m);
+      window.__m = m;
+      return g.score;
+    });
+    await sleep(900);
+    const w = await page.evaluate(() => ({ sc: DJ.app.game.score, st: DJ.app.game.dd.state, dead: window.__m.dead }));
+    check(w.st === 'wings' && w.sc - sc0 > 250, '飞翼升空，分数飞涨（+' + (w.sc - sc0) + '）');
+    check(w.dead, '飞翼撞飞了路上的怪物');
+    await page.screenshot({ path: path.join(OUT, 'wings.png') });
+    for (let i = 0; i < 60 && (await page.evaluate(() => DJ.app.game.dd.state)) === 'wings'; i++) await sleep(100);
+    const after2 = await page.evaluate(() => ({ st: DJ.app.game.dd.state, sh: DJ.app.game.dd.shield }));
+    check(after2.st === 'normal' && after2.sh > 0, '飞翼结束后回到普通状态并带护盾（' + after2.st + ', ' + after2.sh.toFixed(2) + '）');
 
     // 失败结算：把角色扔到屏幕下方
     await page.evaluate(() => {
@@ -188,6 +247,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       try {
         await tapButton(native.page, 'play');
         await sleep(200);
+        await native.page.evaluate(() => {
+          const g = DJ.app.game;
+          for (let x = 29; x < 320; x += 52) g.addPlatform('normal', x, g.startY).vx = 0;
+        });
         // 每一段检查前都把角色放回起始平台上，免得走出平台摔死后读到过期的 vx
         const reset = () =>
           native.page.evaluate(() => {

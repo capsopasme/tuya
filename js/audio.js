@@ -23,7 +23,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       const d = noiseBuf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     }
-    if (ac.state === 'suspended') ac.resume();
+    if (ac.state === 'suspended') {
+      const r = ac.resume();
+      if (r && r.catch) r.catch(function () {}); // 没有用户手势时会被拒绝，下次点击再试
+    }
   };
 
   function tone(type, f0, f1, dur, vol, delay) {
@@ -100,6 +103,25 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     jet: function () {
       noise(0.16, 0.16, 500);
       tone('sawtooth', 90, 70, 0.16, 0.05);
+    },
+    // 飞翼：一串往上走的亮晶晶琶音 + 一声低沉的“呼”
+    wings: function () {
+      const notes = [523, 659, 784, 1047, 1319];
+      for (let i = 0; i < notes.length; i++) {
+        tone('triangle', notes[i], notes[i], 0.16, 0.2, i * 0.055);
+        tone('sine', notes[i] * 2, notes[i] * 2, 0.12, 0.05, i * 0.055 + 0.02);
+      }
+      tone('sine', 110, 330, 0.5, 0.25);
+      noise(0.35, 0.18, 1200);
+    },
+    flap: function () {
+      noise(0.16, 0.2, 700);
+      tone('sine', 150, 90, 0.14, 0.08);
+    },
+    smash: function () {
+      tone('square', 420, 90, 0.16, 0.12);
+      noise(0.14, 0.3, 2500);
+      tone('triangle', 900, 1400, 0.1, 0.08, 0.04);
     },
     fall: function () {
       tone('sine', 700, 90, 0.9, 0.25);

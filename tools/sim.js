@@ -98,7 +98,7 @@ function run(seed, opts) {
       break;
     }
     if (g.monsters.length + g.holes.length > 0) hazards++;
-    if (dd.state === 'normal' || dd.state === 'propeller' || dd.state === 'jetpack') minRel = Math.min(minRel, dd.y - g.camY);
+    if (dd.state === 'normal' || DJ.FLYING[dd.state] === 1) minRel = Math.min(minRel, dd.y - g.camY);
   }
   return { seed: seed, score: g.score, seconds: steps * DT, over: g.phase === 'over', maxPlat: maxPlat, nan: nan, state: g.dd.state, hazards: hazards, minRel: minRel, H: g.H };
 }
@@ -234,6 +234,87 @@ function unitTests(fails) {
   g.fire({ tx: 0, ty: 0 });
   for (let i = 0; i < 360 && !fl.dead && fl.hp > 0; i++) g.update(DT, { axis: 0, shots: [] });
   if (fl.hp === 2) fails.push('自动瞄准的子弹没有命中移动中的怪物（提前量不对？）');
+
+  // 棕色平台和真平台在同一个物理步里都被穿过：棕色的碎掉，但要稳稳落在真平台上（以前会直接穿过去）
+  g = bareGame(6);
+  const green = g.addPlatform('normal', 160, 400);
+  const brn = g.addPlatform('brown', 160, 396);
+  g.dd.x = 160;
+  g.dd.y = 390;
+  g.dd.prevY = 390;
+  g.dd.vy = 1100;
+  const evs = [];
+  for (let i = 0; i < 3; i++) {
+    g.update(DT, { axis: 0, shots: [] });
+    evs.push.apply(evs, g.events.splice(0));
+  }
+  if (!brn.dead) fails.push('同一步里被穿过的棕色平台没有碎');
+  if (evs.indexOf('jump') < 0 || g.dd.vy >= 0) fails.push('棕色平台挡住了同一步里的真平台，角色没有起跳：' + evs);
+  void green;
+
+  // 飞翼：拿到后进入 wings 状态，飞得比喷气背包高得多；撞碎怪物、无视黑洞；结束后有护盾
+  function flyHeight(type) {
+    const g2 = bareGame(7);
+    const p = g2.addPlatform('normal', 160, 450);
+    p.item = { type: type, ox: 0, w: type === 'wings' ? 36 : 26, h: 30, used: false, fired: false, t: 0 };
+    g2.dd.x = 160;
+    g2.dd.y = 440;
+    g2.dd.prevY = 440;
+    g2.dd.vy = 50;
+    const y0 = g2.dd.y;
+    let st = null;
+    let top = y0;
+    for (let i = 0; i < 120 * 8; i++) {
+      g2.update(DT, { axis: 0, shots: [] });
+      g2.events.length = 0;
+      if (!st && g2.dd.state !== 'normal') st = g2.dd.state;
+      top = Math.min(top, g2.dd.y);
+      if (st && g2.dd.state === 'normal' && g2.dd.vy > 0) break;
+    }
+    return { st: st, h: y0 - top, g: g2 };
+  }
+  const jet = flyHeight('jet');
+  const wing = flyHeight('wings');
+  console.log('飞行高度：喷气背包 %d px，飞翼 %d px', Math.round(jet.h), Math.round(wing.h));
+  if (wing.st !== 'wings') fails.push('拿到飞翼后没有进入 wings 状态：' + wing.st);
+  if (!(wing.h > jet.h * 1.8)) fails.push('飞翼应该比喷气背包飞得高得多：' + wing.h + ' vs ' + jet.h);
+  if (!(wing.g.dd.shield > 0 || wing.g.dd.state === 'normal')) fails.push('飞翼结束后状态异常');
+
+  g = bareGame(8);
+  g.dd.x = 160;
+  g.dd.y = 400;
+  g.dd.state = 'wings';
+  g.dd.stateT = 0;
+  g.dd.vy = -1000;
+  const mon = g.makeMonster('blob', 160, 300);
+  mon.amp = 0;
+  g.monsters.push(mon);
+  g.holes.push({ x: 160, y: 120, r: 28, t: 0 });
+  for (let i = 0; i < 60; i++) g.update(DT, { axis: 0, shots: [] });
+  if (!mon.dead) fails.push('飞翼没有撞碎路上的怪物');
+  if (g.holes.length) fails.push('飞翼没有撞散路上的黑洞');
+  if (g.dd.state !== 'wings') fails.push('飞翼飞行中被怪物/黑洞打断了：' + g.dd.state);
+
+  // 护盾：落地后侧面撞到怪物不会死，怪物被撞飞；黑洞也吸不走
+  g = bareGame(9);
+  g.dd.shield = 1;
+  g.dd.x = 160;
+  g.dd.y = 300;
+  g.dd.vy = -200;
+  const m2 = g.makeMonster('blob', 160, 290);
+  m2.amp = 0;
+  g.monsters.push(m2);
+  g.holes.push({ x: 160, y: 250, r: 28, t: 0 });
+  for (let i = 0; i < 10; i++) g.update(DT, { axis: 0, shots: [] });
+  if (g.dd.state !== 'normal') fails.push('护盾期间仍然被怪物/黑洞干掉了：' + g.dd.state);
+  if (!m2.dead) fails.push('护盾期间撞到的怪物应当被撞飞');
+  g.dd.shield = 0;
+  const m3 = g.makeMonster('blob', g.dd.x, g.dd.y - 10);
+  m3.amp = 0;
+  g.monsters.push(m3);
+  g.holes.length = 0;
+  for (let i = 0; i < 5; i++) g.update(DT, { axis: 0, shots: [] });
+  if (g.dd.state !== 'dead') fails.push('护盾结束后撞到怪物应该会死：' + g.dd.state);
 }
 
 function median(a) {

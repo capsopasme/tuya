@@ -11,13 +11,22 @@
   const app = {
     game: game,
     // 老版本存过的 control（触屏/倾斜）设置已经没有意义，直接忽略
-    settings: Object.assign({ sound: true, sens: 1 }, DJ.store.get('settings', {})),
+    settings: Object.assign({ sound: true, sens: 1, hero3d: true }, DJ.store.get('settings', {})),
     scores: DJ.store.get('scores', []),
     newBest: false,
   };
-  if (!(app.settings.sens >= 0 && app.settings.sens <= 2)) app.settings.sens = 1;
+  // 存档可能是旧版本写的、或者被改坏了：逐项校验，不合法就用默认值
+  if ([0, 1, 2].indexOf(app.settings.sens) < 0) app.settings.sens = 1;
+  app.settings.sound = app.settings.sound !== false;
+  app.settings.hero3d = app.settings.hero3d !== false;
+  if (!Array.isArray(app.scores)) app.scores = [];
+  app.scores = app.scores.filter(function (s) {
+    return typeof s === 'number' && isFinite(s) && s > 0;
+  });
   DJ.app = app; // 方便测试脚本读取状态
-  game.best = DJ.store.get('best', 0);
+  const best = DJ.store.get('best', 0);
+  game.best = typeof best === 'number' && isFinite(best) && best > 0 ? Math.floor(best) : 0;
+  DJ.hero3d.on = app.settings.hero3d;
   DJ.audio.enabled = app.settings.sound;
   I.sens = SENS[app.settings.sens];
   DJ.shownScore = 0;
@@ -154,6 +163,11 @@
       case 'sound':
         app.settings.sound = !app.settings.sound;
         DJ.audio.enabled = app.settings.sound;
+        save();
+        break;
+      case 'hero':
+        app.settings.hero3d = !app.settings.hero3d;
+        DJ.hero3d.on = app.settings.hero3d;
         save();
         break;
       case 'sens':
@@ -382,7 +396,7 @@
         ctx.fillRect(v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0);
       }
     } else if (s === 'pause' || s === 'over') {
-      DJ.drawScene(ctx, game, s === 'over' ? 1 : alpha);
+      DJ.drawScene(ctx, game, s === 'over' ? 1 : alpha, true);
       UI.draw(ctx, app);
     } else {
       UI.draw(ctx, app);

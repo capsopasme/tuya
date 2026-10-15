@@ -41,6 +41,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         g.dd.vy = 0;
         g.dd.bounceT = 1;
         g.dd.shootT = 99;
+        g.dd.shield = 0;
+        g.dd.armPose = 0.35;
+        g.dd.look = 0.4;
+        g.dd.belly = g.dd.b2 = 0;
+        g.dd.stateT = 0;
         g.dd.x = 160;
         g.dd.y = g.H - 60;
         new Function('g', src)(g);
@@ -97,6 +102,44 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }
     await stage('propeller', `g.dd.state = 'propeller'; g.dd.x = 160; g.dd.y = 300; g.dd.vy = -500; g.dd.facing = -1;`);
     await stage('dead', `g.dd.state = 'dead'; g.dd.x = 160; g.dd.y = 300; g.dd.vy = 100; g.dd.facing = 1; g.dd.t = 0.3;`);
+    await stage('jetpack', `g.dd.state = 'jetpack'; g.dd.x = 160; g.dd.y = 300; g.dd.vy = -800; g.dd.t = 0.4;`);
+
+    // 飞翼：平台上的道具、拿到瞬间的特效、飞行中、结束后的护盾
+    await stage(
+      'wings-item',
+      `
+      const p = g.addPlatform('normal', 160, 220); p.vx = 0;
+      p.item = { type: 'wings', ox: 0, w: 36, h: 30, used: false, fired: false, t: 0 };
+      const q = g.addPlatform('normal', 80, 340); q.vx = 0;
+      q.item = { type: 'jet', ox: 0, w: 26, h: 32, used: false, fired: false, t: 0 };
+      `
+    );
+    await stage('wings-pickup', `g.dd.x = 160; g.dd.y = 330; g.itemFx('wings', 160, 330 - 24 * DJ.C.HERO); g.dd.state = 'wings'; g.dd.stateT = 0.3; g.dd.vy = -1300; g.dd.t = 0.2;`);
+    await stage('wings-fly', `g.fx.length = 0; g.flash = 0; g.shake = 0; g.dd.state = 'wings'; g.dd.stateT = 1.5; g.dd.x = 160; g.dd.y = 330; g.dd.vy = -1350; g.dd.t = 1.1; g.dd.look = 0.6;
+      for (let i = 0; i < 40; i++) g.trailFx(0.04);`);
+    await stage('shield', `g.fx.length = 0; g.dd.state = 'normal'; g.dd.shield = 1.2; g.dd.x = 160; g.dd.y = 330; g.dd.vy = -400; g.dd.t = 0.5;
+      g.monsters.push(g.makeMonster('blob', 230, 230));`);
+
+    // 2D / 3D 对比（同一套姿态）
+    for (const mode of ['2d', '3d']) {
+      await page.evaluate((m) => (DJ.hero3d.on = m === '3d'), mode);
+      for (const [name, v] of [['rest', 0], ['squash', 0.8], ['stretch', -0.6]]) {
+        await stage(
+          'hero' + mode + '-' + name,
+          `const P = g.addPlatform('normal', 160, g.H - 60); P.vx = 0;
+           g.dd.x = 160; g.dd.y = g.H - 60; g.dd.belly = ${v}; g.dd.b2 = ${v} * 1.2; g.dd.vy = 0; g.dd.bounceT = 0.3; g.dd.look = 0.7;`
+        );
+      }
+      await stage('hero' + mode + '-shoot', `g.dd.x = 160; g.dd.y = 300; g.dd.vy = -300; g.dd.bounceT = 0.3; g.dd.shootT = 0.05; g.dd.aim = -1.1; g.dd.look = 0.9;`);
+      await stage('hero' + mode + '-dead', `g.dd.state = 'dead'; g.dd.x = 160; g.dd.y = 300; g.dd.vy = 100; g.dd.t = 0.3;`);
+    }
+    await page.evaluate(() => (DJ.hero3d.on = true));
+    // 放大看 3D 主角细节
+    await page.evaluate(() => { const g = DJ.app.game; g.update = g._update; g.platforms.length = 0; g.addPlatform('normal', 160, 400).vx = 0; g.dd.state = 'normal'; g.dd.x = 160; g.dd.y = 400; g.dd.vy = 0; g.dd.belly = 0.5; g.dd.b2 = 0.6; g.dd.look = 0.5; g.dd.shootT = 99; g.camY = 0; g.update = function () {}; });
+    await sleep(120);
+    const pos = await page.evaluate(() => ({ x: DJ.view.ox + 110 * DJ.view.scale, y: DJ.view.oy + 330 * DJ.view.scale, w: 100 * DJ.view.scale, h: 90 * DJ.view.scale }));
+    await page.screenshot({ path: path.join(OUT, 'hero3d-zoom.png'), clip: { x: pos.x, y: pos.y, width: pos.w, height: pos.h } });
+    console.log('3D 主角可用：' + (await page.evaluate(() => DJ.hero3d.supported() + ' ' + (DJ.hero3d.error || ''))));
 
     if (errors.length) {
       console.error(errors.join('\n'));

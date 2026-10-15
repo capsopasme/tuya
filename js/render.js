@@ -6,6 +6,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   const lerp = DJ.lerp;
   const INK = '#2d2d26';
   const TAU = Math.PI * 2;
+  const HS = DJ.C.HERO; // 主角缩放：画主角时先缩放，内部仍按原来的“单位”画
 
   DJ.FONT =
     '"Chalkboard SE","Marker Felt","Bradley Hand","Segoe Print","Comic Sans MS","Kaiti SC","STKaiti","KaiTi","Noto Sans CJK SC","Microsoft YaHei",cursive,sans-serif';
@@ -224,6 +225,43 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.beginPath();
       ctx.ellipse(0, -18, 13, 2.4, 0, 0, TAU);
       fillStroke(ctx, '#f2d24a', 1.6);
+    } else if (it.type === 'wings') {
+      // 飞翼：一对小翅膀悬在平台上方慢慢扇，周围一圈呼吸的金光和闪烁的小星星
+      const t = performance_now();
+      const bob = Math.sin(t * 3 + p.x * 0.05) * 2;
+      ctx.translate(x, y - 14 + bob);
+      const pulse = 0.75 + 0.25 * Math.sin(t * 5);
+      const gr = ctx.createRadialGradient(0, 0, 2, 0, 0, 30);
+      gr.addColorStop(0, 'rgba(255,236,150,' + (0.85 * pulse).toFixed(3) + ')');
+      gr.addColorStop(1, 'rgba(255,236,150,0)');
+      ctx.fillStyle = gr;
+      ctx.beginPath();
+      ctx.arc(0, 0, 30, 0, TAU);
+      ctx.fill();
+      const flap = Math.sin(t * 6) * 0.3;
+      for (const s of [-1, 1]) {
+        ctx.save();
+        ctx.translate(s * 3, 2);
+        ctx.scale(s * 0.4, 0.4);
+        ctx.rotate(-0.25 - flap);
+        wingShape(ctx);
+        ctx.restore();
+      }
+      // 中间一颗小宝石把两只翅膀连起来
+      ctx.beginPath();
+      ctx.moveTo(0, -5);
+      ctx.lineTo(4.5, 1);
+      ctx.lineTo(0, 7);
+      ctx.lineTo(-4.5, 1);
+      ctx.closePath();
+      fillStroke(ctx, '#ff7ac8', 1.6);
+      for (let i = 0; i < 3; i++) {
+        const a = t * 1.7 + (i * TAU) / 3;
+        const k = 0.5 + 0.5 * Math.sin(t * 7 + i * 2);
+        star(ctx, Math.cos(a) * 24, Math.sin(a) * 12 - 2, 2 + 2.2 * k);
+        ctx.fillStyle = 'rgba(255,240,160,' + (0.5 + 0.5 * k).toFixed(3) + ')';
+        ctx.fill();
+      }
     } else if (it.type === 'jet') {
       ctx.translate(x, y - 1);
       rr(ctx, -11, -28, 9, 26, 4);
@@ -247,6 +285,38 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   // 动画时间：浏览器用 performance.now，测试里也可用
   function performance_now() {
     return (DJ.clock !== undefined ? DJ.clock : Date.now() / 1000) || 0;
+  }
+
+  // 一只右翅膀（根部在原点，向 +x 张开），五根长飞羽扇形排开 + 根部一片覆羽。左翅膀由调用方镜像
+  const FEATHERS = [
+    [-0.78, 52],
+    [-0.5, 50],
+    [-0.22, 45],
+    [0.05, 38],
+    [0.3, 29],
+  ];
+  function wingShape(ctx) {
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < FEATHERS.length; i++) {
+      const a = FEATHERS[i][0];
+      const L = FEATHERS[i][1];
+      const g = ctx.createLinearGradient(0, 0, Math.cos(a) * L, Math.sin(a) * L);
+      g.addColorStop(0, '#ffffff');
+      g.addColorStop(0.6, '#fffbe8');
+      g.addColorStop(1, '#ffd96a');
+      ctx.beginPath();
+      ctx.ellipse(Math.cos(a) * L * 0.52, Math.sin(a) * L * 0.52, L * 0.52, 6.8, a, 0, TAU);
+      fillStroke(ctx, g, 1.8);
+    }
+    ctx.beginPath();
+    ctx.ellipse(13, -6, 17, 11, -0.35, 0, TAU);
+    fillStroke(ctx, '#ffffff', 1.8);
+    ctx.beginPath();
+    ctx.moveTo(5, -4);
+    ctx.quadraticCurveTo(14, -12, 25, -11);
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = 'rgba(230,180,60,0.8)';
+    ctx.stroke();
   }
 
   // ---------- 主角：小海星（原创角色：绿色的肥肥海星，五条胖手臂，正面朝前，张嘴吐泡泡球）----------
@@ -316,8 +386,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       [-fx, FOOT_Y],
       [fx, FOOT_Y],
     ];
-    return { st: st, vy: vy, L: L, sxB: sxB, syB: syB, b2: b2, by: by, look: look, pose: pose, shootK: shootK, aim: aim, top: top, sides: sides, legs: legs };
+    return { st: st, vy: vy, L: L, sxB: sxB, syB: syB, b2: b2, bd: bd, by: by, look: look, pose: pose, shootK: shootK, aim: aim, top: top, sides: sides, legs: legs };
   }
+  DJ.starGeom = starGeom;
+  DJ.HERO_DIM = { OUT_W: OUT_W, ARM_ROOT: ARM_ROOT, ARM_TIP: ARM_TIP, ARM_LEN: ARM_LEN, DISC: DISC, FOOT_Y: FOOT_Y };
 
   // 整个身体的路径：五条根粗尖细的胖手臂（一串渐变半径的圆叠出来）+ 中心圆盘，全在同一条路径里，
   // extra 是外扩的像素数（画外轮廓时用），整条路径一次 fill 出来就是一整块没有内部线条的剪影
@@ -349,35 +421,72 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   }
 
   // 残影：只画一层半透明的绿色剪影（一次 fill，不会因为部位重叠而叠深）
-  function starGhost(ctx, d, x, y, alpha) {
+  function starGhost(ctx, d, x, y, alpha, col) {
     ctx.save();
     ctx.translate(x, y);
+    ctx.scale(HS, HS);
     starPath(ctx, starGeom(d), 1.5);
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = '#b6f783';
+    ctx.fillStyle = col || '#b6f783';
     ctx.fill();
     ctx.restore();
   }
   DJ.drawStarGhost = starGhost;
 
-  function doodlerAt(ctx, dd, x, y) {
-    const st = dd.state;
-    ctx.save();
-    ctx.translate(x, y);
-    if (st === 'blackhole' || st === 'abducted') {
-      ctx.translate(0, -24);
-      ctx.rotate(dd.spin);
-      ctx.scale(Math.max(0.01, dd.scale), Math.max(0.01, dd.scale));
-      ctx.translate(0, 24);
-    } else if (st === 'dead') {
-      ctx.translate(0, -24);
-      ctx.rotate(Math.sin(dd.spin) * 0.25);
-      ctx.translate(0, 24);
+  // 飞翼：两只大翅膀长在背后（画在身体后面），飞行时快速扇动，快结束时越扇越慢
+  function heroWings(ctx, dd, g) {
+    const T = DJ.C.WING_T;
+    const left = T - (dd.stateT || 0);
+    const speed = left < 1 ? lerp(7, 15, clamp(left, 0, 1)) : 15;
+    const flap = Math.sin((dd.t || 0) * speed) * 0.55;
+    const open = clamp((dd.stateT || 0) / 0.18, 0, 1); // 拿到的一瞬间翅膀“唰”地张开
+    // 背后的金色光晕
+    const r = 58 * (0.6 + 0.4 * open);
+    const gr = ctx.createRadialGradient(0, g.by, 4, 0, g.by, r);
+    gr.addColorStop(0, 'rgba(255,236,150,0.55)');
+    gr.addColorStop(1, 'rgba(255,236,150,0)');
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.arc(0, g.by, r, 0, TAU);
+    ctx.fill();
+    for (const s of [-1, 1]) {
+      ctx.save();
+      ctx.translate(s * 6 * g.sxB, g.by - 4 * g.syB);
+      const ws = 1.3 * (0.35 + 0.65 * open); // 翅膀比身体还大，一眼就看得出是终极道具
+      ctx.scale(s * ws, ws);
+      ctx.rotate(-0.12 - flap);
+      wingShape(ctx);
+      ctx.restore();
     }
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
+  }
 
-    const g = starGeom(dd);
+  // 飞翼结束后的护盾：一圈闪烁的金色光环，快结束时闪得更快
+  function heroShield(ctx, dd, g) {
+    const t = dd.t || 0;
+    const fade = clamp(dd.shield / 0.4, 0, 1);
+    const blink = dd.shield < 0.6 ? 0.5 + 0.5 * Math.sin(t * 40) : 0.75 + 0.25 * Math.sin(t * 10);
+    const r = 36 + Math.sin(t * 8) * 1.5;
+    ctx.save();
+    ctx.globalAlpha = fade * blink;
+    const gr = ctx.createRadialGradient(0, g.by, r * 0.55, 0, g.by, r);
+    gr.addColorStop(0, 'rgba(255,236,150,0)');
+    gr.addColorStop(1, 'rgba(255,226,120,0.45)');
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.arc(0, g.by, r, 0, TAU);
+    ctx.fill();
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = 'rgba(240,190,50,0.9)';
+    ctx.setLineDash([7, 5]);
+    ctx.lineDashOffset = -t * 30;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // 2D 版本的身体和脸（手绘描边）
+  function body2d(ctx, dd, g) {
+    const st = dd.state;
     const sxB = g.sxB;
     const syB = g.syB;
     const by = g.by;
@@ -386,8 +495,6 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const pose = g.pose;
     const aim = g.aim;
     const shootK = g.shootK;
-    const topY = g.top[1] - ARM_TIP - OUT_W; // 头顶最高点（含描边）
-
     // 身体：先整块描黑边，再整块填上渐变的绿色
     starPath(ctx, g, OUT_W);
     ctx.fillStyle = INK;
@@ -491,6 +598,40 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.strokeStyle = INK;
       ctx.stroke();
     }
+  }
+
+  function doodlerAt(ctx, dd, x, y) {
+    const st = dd.state;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(HS, HS); // 以下都按原来的“单位”画，整体缩小
+    if (st === 'blackhole' || st === 'abducted') {
+      ctx.translate(0, -24);
+      ctx.rotate(dd.spin);
+      ctx.scale(Math.max(0.01, dd.scale), Math.max(0.01, dd.scale));
+      ctx.translate(0, 24);
+    } else if (st === 'dead') {
+      ctx.translate(0, -24);
+      ctx.rotate(Math.sin(dd.spin) * 0.25);
+      ctx.translate(0, 24);
+    }
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    const g = starGeom(dd);
+    const sxB = g.sxB;
+    const by = g.by;
+    const topY = g.top[1] - ARM_TIP - OUT_W; // 头顶最高点（含描边）
+
+    if (st === 'wings') heroWings(ctx, dd, g);
+    if (dd.shield > 0 && st === 'normal') heroShield(ctx, dd, g);
+
+    // 3D 模式：身体和脸由 WebGL 光线步进渲染（真的有体积、光照和晃动的大肚子），道具配件仍用 2D 画在上面
+    if (DJ.hero3d && DJ.hero3d.active()) {
+      DJ.hero3d.draw(ctx, dd, g);
+    } else {
+      body2d(ctx, dd, g);
+    }
 
     // 喷气背包：两个油罐绑在肚子两侧（画在身体前面，不然会被胖手臂挡住），火焰朝下喷
     if (st === 'jetpack') {
@@ -563,8 +704,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const y = ix(dd.py, dd.y, a);
     doodlerAt(ctx, dd, x, y);
     if (dd.state !== 'blackhole' && dd.state !== 'abducted') {
-      if (x < 36) doodlerAt(ctx, dd, x + W, y);
-      else if (x > W - 36) doodlerAt(ctx, dd, x - W, y);
+      // 走到屏幕边缘时另一侧也画一份（飞翼张开时翅膀很宽，边距跟着放大）
+      const edge = (dd.state === 'wings' ? 80 : 46) * HS;
+      if (x < edge) doodlerAt(ctx, dd, x + W, y);
+      else if (x > W - edge) doodlerAt(ctx, dd, x - W, y);
     }
   }
   DJ.drawDoodler = function (ctx, dd) {
@@ -589,7 +732,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     let lx = dd.x - m.x;
-    let ly = dd.y - 24 - m.y;
+    let ly = dd.y - 24 * HS - m.y;
     const ll = Math.hypot(lx, ly) || 1;
     const look = m.dead ? { x: 0, y: 0 } : { x: lx / ll, y: ly / ll };
     const flash = m.flash > 0;
@@ -858,7 +1001,23 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         ctx.fill();
       } else if (f.k === 'ghost') {
         ctx.globalAlpha = 1;
-        if (f.d.state === 'normal' || f.d.state === 'propeller' || f.d.state === 'jetpack') DJ.drawStarGhost(ctx, f.d, f.x, f.y, al * 0.42);
+        if (f.d.state === 'normal' || DJ.FLYING[f.d.state] === 1) DJ.drawStarGhost(ctx, f.d, f.x, f.y, al * 0.42, f.col);
+      } else if (f.k === 'feather') {
+        // 羽毛：白色细长叶片 + 一根羽轴，摆动着往下飘，最后淡出
+        ctx.globalAlpha = Math.min(1, al * 2);
+        ctx.save();
+        ctx.translate(f.x, f.y);
+        ctx.rotate(f.rot);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, f.r * 1.9, f.r * 0.75, 0, 0, TAU);
+        fillStroke(ctx, '#fffdf2', 1.2);
+        ctx.beginPath();
+        ctx.moveTo(-f.r * 2.4, 0);
+        ctx.lineTo(f.r * 1.5, 0);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(200,160,60,0.9)';
+        ctx.stroke();
+        ctx.restore();
       } else if (f.k === 'rays') {
         // 放射线：从中心往外“嗖”地射出去，射线先变长、后脱离中心
         const e = 1 - Math.pow(1 - Math.min(1, u * 1.7), 2);
@@ -939,29 +1098,34 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   function speedLines(ctx, dd, x, y) {
     const k = clamp((-dd.vy - 650) / 450, 0, 1);
     if (k <= 0 || dd.state === 'dead') return;
-    const t = (DJ.clock || 0) * 1100;
+    const wings = dd.state === 'wings'; // 飞翼时速度线更多、更宽、更长，还带一点金色
+    const t = (DJ.clock || 0) * (wings ? 1600 : 1100);
+    const n = wings ? 11 : 7;
+    const span = wings ? 12 : 13 * HS;
+    const col = wings ? '200,150,40,' : '70,110,110,';
     ctx.lineCap = 'round';
     ctx.lineWidth = 2;
-    for (let i = 0; i < 7; i++) {
-      const lx = x + (i - 3) * 13 + Math.sin(i * 12.9) * 4;
-      const len = 26 + ((i * 37) % 22);
+    for (let i = 0; i < n; i++) {
+      const lx = x + (i - (n - 1) / 2) * span + Math.sin(i * 12.9) * 4;
+      const len = (wings ? 40 : 26) + ((i * 37) % 22);
       const off = (t + i * 53) % 70;
       ctx.beginPath();
       ctx.moveTo(lx, y + 4 + off);
       ctx.lineTo(lx, y + 4 + off + len);
-      ctx.strokeStyle = 'rgba(70,110,110,' + (0.3 * k * (1 - off / 70)).toFixed(3) + ')';
+      ctx.strokeStyle = 'rgba(' + col + (0.32 * k * (1 - off / 70)).toFixed(3) + ')';
       ctx.stroke();
     }
   }
 
   // ---------- 整个场景 ----------
   // alpha：上一个物理步到当前物理步之间的插值比例（0..1），让画面在任何刷新率下都顺
-  DJ.drawScene = function (ctx, g, alpha) {
+  // frozen：暂停 / 结算界面上画的静止场景，不再抖屏、不再闪光（否则停下来的那一刻的震动会一直抖下去）
+  DJ.drawScene = function (ctx, g, alpha, frozen) {
     const v = DJ.view;
     const a = alpha === undefined ? 1 : clamp(alpha, 0, 1);
     const cam = ix(g.pCam, g.camY, a);
     // 屏幕震动：整个场景（背景和内容）一起抖，HUD 和留边不抖
-    const sh = g.shake || 0;
+    const sh = frozen ? 0 : g.shake || 0;
     ctx.save();
     if (sh > 0) {
       const tt = performance_now();
@@ -1042,7 +1206,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     effects(ctx, g.fx, true);
     ctx.restore();
     ctx.restore();
-    if (g.flash > 0.004) {
+    if (!frozen && g.flash > 0.004) {
       ctx.fillStyle = 'rgba(' + (g.flashCol || '255,255,255') + ',' + clamp(g.flash, 0, 1).toFixed(3) + ')';
       ctx.fillRect(v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0);
     }

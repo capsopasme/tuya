@@ -7,13 +7,22 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   const lerp = DJ.lerp;
   const rand = DJ.rand;
   const wrapDx = DJ.wrapDx;
+  // 主角缩放后的身体尺寸（单位：逻辑像素）。脚底是原点，身体中心在脚底上方 CENTER 处
+  const HS = C.HERO;
+  const BODY_H = 46 * HS; // 身体（含头顶手臂）的高度，用于怪物/道具碰撞
+  const HALF_W = 15 * HS; // 身体半宽
+  const CENTER = 24 * HS; // 身体中心离脚底的高度
+  const MOUTH = 32 * HS; // 子弹从嘴里吐出来的高度
 
   const ITEM = {
     spring: { w: 18, h: 14 },
     tramp: { w: 42, h: 10 },
     prop: { w: 24, h: 24 },
     jet: { w: 26, h: 32 },
+    wings: { w: 36, h: 30 }, // 终极道具：飞翼
   };
+  const FLYING = { propeller: 1, jetpack: 1, wings: 1 };
+  DJ.FLYING = FLYING;
 
   // 游戏逻辑：不依赖 DOM，可在 Node 中直接跑（见 tools/sim.js）
   function Game() {
@@ -64,7 +73,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       vx: 0,
       vy: -C.JUMP_V,
       facing: 1,
-      state: 'normal', // normal propeller jetpack dead blackhole abducted fell gone
+      state: 'normal', // normal propeller jetpack wings dead blackhole abducted fell gone
       stateT: 0,
       bounceT: 0,
       shootT: 99,
@@ -79,6 +88,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       stretch: 0, // 空中拉伸（跟速度走，平滑过渡）
       spin: 0,
       scale: 1,
+      shield: 0, // 飞翼结束后的护盾剩余时间
       sx: 0,
       sy: 0,
       tx: 0,
@@ -174,15 +184,17 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     // 道具
     if (type === 'normal' || type === 'moving') {
       const r2 = DJ.random();
+      const pw = sc > 3500 ? 0.0035 : 0; // 飞翼：比喷气背包还稀有，3500 分以后才会出现
       const pj = sc > 2500 ? 0.006 : 0;
       const pp = sc > 1200 ? 0.012 : 0;
       const pt = sc > 700 ? 0.016 : 0;
       const ps = 0.06;
       let it = null;
-      if (r2 < pj) it = 'jet';
-      else if (r2 < pj + pp) it = 'prop';
-      else if (r2 < pj + pp + pt) it = 'tramp';
-      else if (r2 < pj + pp + pt + ps) it = 'spring';
+      if (r2 < pw) it = 'wings';
+      else if (r2 < pw + pj) it = 'jet';
+      else if (r2 < pw + pj + pp) it = 'prop';
+      else if (r2 < pw + pj + pp + pt) it = 'tramp';
+      else if (r2 < pw + pj + pp + pt + ps) it = 'spring';
       if (it) {
         const lim = half - ITEM[it].w / 2 - 2;
         p.item = { type: it, ox: rand(-lim, lim), w: ITEM[it].w, h: ITEM[it].h, used: false, fired: false, t: 0 };
@@ -253,13 +265,15 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     dd.armPose += (clamp(dd.vy / 350, -1, 1) - dd.armPose) * ease(16);
     const lookT = dd.shootT < 0.35 ? Math.sign(Math.cos(dd.aim)) * 0.9 : clamp(dd.vx / 140, -1, 1);
     dd.look += (lookT - dd.look) * ease(12);
+    if (dd.shield > 0) dd.shield = Math.max(0, dd.shield - dt);
     const st = dd.state;
-    const flying = st === 'propeller' || st === 'jetpack';
+    const flying = FLYING[st] === 1;
 
     // 水平方向
     if (st === 'normal' || flying) {
-      const target = clamp(input.axis || 0, -1, 1) * C.MAX_VX;
-      const a = C.ACCEL * dt;
+      const vk = st === 'wings' ? C.WING_VX : 1;
+      const target = clamp(input.axis || 0, -1, 1) * C.MAX_VX * vk;
+      const a = C.ACCEL * vk * dt;
       dd.vx += clamp(target - dd.vx, -a, a);
       if (Math.abs(dd.vx) > 20) dd.facing = dd.vx > 0 ? 1 : -1;
       dd.x += dd.vx * dt;
@@ -276,20 +290,34 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       if (dd.vy > 0) this.landing();
     } else if (flying) {
       const prop = st === 'propeller';
-      const T = prop ? C.PROP_T : C.JET_T;
-      const V = prop ? C.PROP_V : C.JET_V;
+      const wings = st === 'wings';
+      const T = prop ? C.PROP_T : wings ? C.WING_T : C.JET_T;
+      const V = prop ? C.PROP_V : wings ? C.WING_V : C.JET_V;
+      const ramp = wings ? 1 : 0.7; // 最后这段时间慢慢减速
       const left = T - dd.stateT;
-      const tv = -(left > 0.7 ? V : lerp(250, V, Math.max(0, left) / 0.7));
-      dd.vy += clamp(tv - dd.vy, -2600 * dt, 2600 * dt);
+      const tv = -(left > ramp ? V : lerp(250, V, Math.max(0, left) / ramp));
+      const acc = wings ? 3600 : 2600;
+      dd.vy += clamp(tv - dd.vy, -acc * dt, acc * dt);
       dd.y += dd.vy * dt;
       this.whirT -= dt;
       if (this.whirT <= 0) {
-        this.whirT = 0.16;
-        this.sfx(prop ? 'prop' : 'jet');
+        this.whirT = wings ? 0.2 : 0.16;
+        this.sfx(prop ? 'prop' : wings ? 'flap' : 'jet');
+      }
+      if (wings) {
+        this.ghostT = Math.max(this.ghostT, 0.05); // 一路拖着金色残影
+        this.smash();
       }
       if (left <= 0) {
         dd.state = 'normal';
         dd.stateT = 0;
+        if (wings) {
+          // 收翅膀前最后用力扇一下，再给一小段护盾，免得一落下来就撞上怪物
+          dd.shield = C.SHIELD_T;
+          this.bounce(C.JUMP_V * 1.15, 1.6);
+          this.wingEndFx();
+          this.sfx('flap');
+        }
       }
     } else if (st === 'dead') {
       dd.vy = Math.min(dd.vy + C.GRAVITY * dt, 1300);
@@ -322,13 +350,14 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     }
 
     // 相机只往上走，而且是缓动跟随（不是硬贴着角色），冲得太快时才硬拉住别让角色出屏幕
-    if (dd.state === 'normal' || dd.state === 'propeller' || dd.state === 'jetpack') {
+    const alive = dd.state === 'normal' || FLYING[dd.state] === 1;
+    if (alive) {
       const target = dd.y - this.H * C.CAM_FRAC;
       if (target < this.camY) this.camY += (target - this.camY) * (1 - Math.exp(-C.CAM_K * dt));
       const topLimit = dd.y - this.H * C.CAM_TOP;
       if (topLimit < this.camY) this.camY = topLimit;
     }
-    if (dd.state === 'normal' || dd.state === 'propeller' || dd.state === 'jetpack') {
+    if (alive) {
       this.maxH = Math.max(this.maxH, this.startY - dd.y);
       this.score = Math.floor(this.maxH / 2);
     }
@@ -412,7 +441,26 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   };
   P.addGhost = function () {
     const dd = this.dd;
-    this.addFx({ k: 'ghost', d: Object.assign({}, dd), x: dd.x, y: dd.y, life: 0.3 });
+    this.addFx({ k: 'ghost', d: Object.assign({}, dd), x: dd.x, y: dd.y, col: dd.state === 'wings' ? '#ffe07a' : null, life: 0.3 });
+  };
+  // 一根飘落的羽毛：左右摆着慢慢往下飘
+  P.feather = function (x, y, vx, vy, life) {
+    this.addFx({ k: 'feather', x: x, y: y, vx: vx, vy: vy, ph: rnd() * TAU, w: 4 + rnd() * 3, r: 4 + rnd() * 2.5, rot: rnd() * TAU, rot0: rnd() * TAU, life: life });
+  };
+  // 飞翼撞碎怪物 / 黑洞的瞬间
+  P.smashFx = function (x, y) {
+    this.shockwave(x, y, { vr: 420, w: 5, col: '255,214,92', flat: 1, life: 0.36 });
+    this.addFx({ k: 'glow', x: x, y: y, r: 50, col: '255,240,170', life: 0.2 });
+    this.burst(x, y, 12, { a0: 0, a1: TAU, s0: 120, s1: 380, g: 700, drag: 1.2, r0: 3.5, r1: 6.5, l0: 0.4, l1: 0.7, spread: 10, shapes: ['star', 'dot'], cols: ['#ffd93b', '#ffffff', '#ff8a5c'] });
+    this.popText(x, y - 26, 'POW!', 24, '#ff8a3d');
+    this.shake = Math.max(this.shake, 5);
+  };
+  // 飞翼时间到，翅膀最后扇一下、抖落一把羽毛
+  P.wingEndFx = function () {
+    const dd = this.dd;
+    const y = dd.y - CENTER;
+    this.shockwave(dd.x, y, { vr: 300, w: 4, col: '255,226,120', flat: 1, life: 0.36 });
+    for (let i = 0; i < 8; i++) this.feather(dd.x + (rnd() - 0.5) * 40, y + (rnd() - 0.5) * 16, (rnd() - 0.5) * 220, -40 + rnd() * 120, 1 + rnd() * 0.6);
   };
 
   // 道具被用上的那一瞬间：弹簧 / 蹦床在脚下 (x, y) 炸开；螺旋桨帽 / 喷气背包在身上炸开
@@ -468,6 +516,28 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       this.flash = Math.max(this.flash, 0.26);
       this.flashCol = '255,200,120';
       this.ghostT = 0.4;
+    } else if (type === 'wings') {
+      // 终极道具：金色 + 白色 + 粉色三层冲击波、巨型光柱、满天星星和羽毛、金色闪屏、狠狠一震
+      const cols = ['#ffe27a', '#fff6c8', '#ffffff', '#ffb3e0', '#9be8ff'];
+      this.shockwave(x, y, { vr: 760, w: 9, col: '255,214,92', flat: 1, life: 0.6 });
+      this.shockwave(x, y, { vr: 600, w: 6, col: '255,255,255', flat: 1, life: 0.52, delay: 0.05 });
+      this.shockwave(x, y, { vr: 470, w: 4, col: '255,160,220', flat: 1, life: 0.46, delay: 0.1 });
+      this.shockwave(x, y + CENTER, { vr: 900, w: 7, col: '255,236,150', life: 0.5 });
+      this.addFx({ k: 'glow', x: x, y: y, r: 150, col: '255,240,170', life: 0.4 });
+      this.addFx({ k: 'beam', x: x, y: y + 40, w: 76, h: 560, col: '255,226,120', life: 0.6 });
+      this.addFx({ k: 'rays', x: x, y: y, n: 22, a0: 0, a1: (TAU * 21) / 22, R: 170, w: 5, col: '255,214,92', life: 0.5 });
+      this.addFx({ k: 'rays', x: x, y: y, n: 14, a0: 0.11, a1: 0.11 + (TAU * 13) / 14, R: 120, w: 3, col: '255,255,255', life: 0.42 });
+      this.burst(x, y, 22, { a0: 0, a1: TAU, s0: 180, s1: 560, g: 260, drag: 1.5, r0: 4, r1: 8, l0: 0.6, l1: 1.1, spread: 12, shapes: ['star', 'star', 'dot'], cols: cols });
+      for (let i = 0; i < 14; i++) {
+        const a = rnd() * TAU;
+        const sp = 120 + rnd() * 260;
+        this.feather(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 1.1 + rnd() * 0.7);
+      }
+      this.popText(x, y - 56, '飞翼!!', 34, '#ffd84a');
+      this.shake = Math.max(this.shake, 9);
+      this.flash = Math.max(this.flash, 0.55);
+      this.flashCol = '255,236,170';
+      this.ghostT = 0.6;
     }
   };
 
@@ -482,19 +552,29 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         this.addGhost();
       }
     }
-    if (dd.state !== 'jetpack' && dd.state !== 'propeller') return;
+    if (FLYING[dd.state] !== 1) return;
     if (this.fx.length > 260) return;
     this.trailT -= dt;
     if (this.trailT > 0) return;
     if (dd.state === 'jetpack') {
       this.trailT = 0.022;
+      // 火焰从两个油罐的喷口喷出（油罐在身体两侧约 19 个单位处）
       for (const s of [-1, 1]) {
-        this.addFx({ k: 'fire', x: dd.x + s * 12.5 + (rnd() - 0.5) * 4, y: dd.y - 8, vx: (rnd() - 0.5) * 50, vy: 160 + rnd() * 170, r: 5 + rnd() * 3.5, life: 0.26 + rnd() * 0.2 });
+        this.addFx({ k: 'fire', x: dd.x + s * 19 * HS + (rnd() - 0.5) * 4, y: dd.y - 8 * HS, vx: (rnd() - 0.5) * 50, vy: 160 + rnd() * 170, r: (5 + rnd() * 3.5) * Math.sqrt(HS), life: 0.26 + rnd() * 0.2 });
       }
+    } else if (dd.state === 'wings') {
+      this.trailT = 0.03;
+      const s = rnd() < 0.5 ? -1 : 1;
+      if (rnd() < 0.45) this.feather(dd.x + s * (18 + rnd() * 22) * HS, dd.y - CENTER + (rnd() - 0.5) * 10, s * (30 + rnd() * 60), 140 + rnd() * 140, 0.8 + rnd() * 0.5);
+      this.addFx({
+        k: 'part', shape: rnd() < 0.5 ? 'star' : 'dot', x: dd.x + (rnd() - 0.5) * 24, y: dd.y - 4,
+        vx: (rnd() - 0.5) * 60, vy: 160 + rnd() * 160, g: 0, drag: 1.5, r: 2.2 + rnd() * 2, rot: rnd() * TAU, vr: (rnd() - 0.5) * 12,
+        col: ['#ffe27a', '#fff6c8', '#ffffff', '#ffb3e0'][(rnd() * 4) | 0], life: 0.45 + rnd() * 0.3,
+      });
     } else {
       this.trailT = 0.06;
       const s = rnd() < 0.5 ? -1 : 1;
-      this.addFx({ k: 'streak', x: dd.x + s * (14 + rnd() * 14), y: dd.y - 70 - rnd() * 20, vx: s * 10, vy: 230 + rnd() * 120, life: 0.24 });
+      this.addFx({ k: 'streak', x: dd.x + s * (14 + rnd() * 14) * HS, y: dd.y - 70 * HS - rnd() * 20, vx: s * 10, vy: 230 + rnd() * 120, life: 0.24 });
     }
   };
 
@@ -511,11 +591,13 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const prev = dd.prevY;
     const cur = dd.y;
     let best = null;
+    let brown = null; // 这一步踩到的棕色平台：只会被踩碎，不能挡住同一步里本来能踩到的真平台
     for (let i = 0; i < this.platforms.length; i++) {
       const p = this.platforms[i];
       if (p.dead) continue;
       if (prev <= p.y + 0.01 && cur >= p.y && Math.abs(wrapDx(dd.x, p.x)) <= p.w / 2 + C.FEET) {
-        if (!best || p.y < best.sy) best = { sy: p.y, p: p, it: null };
+        if (p.type === 'brown') (brown || (brown = [])).push(p);
+        else if (!best || p.y < best.sy) best = { sy: p.y, p: p, it: null };
       }
       const it = p.item;
       if (it && !it.used && (it.type === 'spring' || it.type === 'tramp')) {
@@ -527,6 +609,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
           if (!best || sy < best.sy) best = { sy: sy, p: p, it: it };
         }
       }
+    }
+    if (brown) {
+      // 只踩碎落脚点上方（或同高）的棕色平台；在落脚点下面的根本碰不到
+      for (let i = 0; i < brown.length; i++) if (!best || brown[i].y <= best.sy) this.breakPlatform(brown[i]);
     }
     if (!best) return;
     const p = best.p;
@@ -545,10 +631,6 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         this.bounce(C.TRAMP_V, 2);
         this.sfx('tramp');
       }
-      return;
-    }
-    if (p.type === 'brown') {
-      this.breakPlatform(p);
       return;
     }
     dd.y = best.sy;
@@ -576,17 +658,17 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     for (let i = 0; i < this.platforms.length; i++) {
       const p = this.platforms[i];
       const it = p.item;
-      if (!it || it.used || (it.type !== 'prop' && it.type !== 'jet')) continue;
+      if (!it || it.used || (it.type !== 'prop' && it.type !== 'jet' && it.type !== 'wings')) continue;
       const dx = wrapDx(dd.x, p.x + it.ox);
-      if (Math.abs(dx) < it.w / 2 + 12 && dd.y > p.y - it.h - 4 && dd.y - 46 < p.y) {
+      if (Math.abs(dx) < it.w / 2 + HALF_W - 3 && dd.y > p.y - it.h - 4 && dd.y - BODY_H < p.y) {
         it.used = true;
-        dd.state = it.type === 'prop' ? 'propeller' : 'jetpack';
+        dd.state = it.type === 'prop' ? 'propeller' : it.type === 'jet' ? 'jetpack' : 'wings';
         dd.stateT = 0;
-        dd.vy = Math.min(dd.vy, -300);
+        dd.vy = Math.min(dd.vy, it.type === 'wings' ? -450 : -300);
         this.whirT = 0;
         this.trailT = 0;
-        this.itemFx(it.type, dd.x, dd.y - 26);
-        this.sfx('pickup');
+        this.itemFx(it.type, dd.x, dd.y - CENTER);
+        this.sfx(it.type === 'wings' ? 'wings' : 'pickup');
         return;
       }
     }
@@ -594,14 +676,15 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
   P.hazards = function () {
     const dd = this.dd;
-    const top = dd.y - 46;
+    const top = dd.y - BODY_H;
     const bot = dd.y;
-    const hw = 15;
+    const hw = HALF_W;
+    const shielded = dd.shield > 0; // 飞翼刚结束的护盾：怪物直接撞飞，黑洞和 UFO 光束无效
     for (let i = 0; i < this.monsters.length; i++) {
       const m = this.monsters[i];
       if (m.dead) continue;
       const dx = wrapDx(dd.x, m.x);
-      if (m.kind === 'ufo' && Math.abs(dx) < 30 && bot > m.y + 12 && top < m.y + 150) {
+      if (!shielded && m.kind === 'ufo' && Math.abs(dx) < 30 && bot > m.y + 12 && top < m.y + 150) {
         dd.state = 'abducted';
         dd.stateT = 0;
         dd.sx = dd.x;
@@ -617,6 +700,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
           this.killMonster(m);
           this.bounce(C.STOMP_V);
           this.sfx('stomp');
+        } else if (shielded) {
+          this.killMonster(m);
+          this.smashFx(m.x, m.y);
+          this.sfx('smash');
         } else {
           dd.state = 'dead';
           dd.stateT = 0;
@@ -627,21 +714,52 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         }
       }
     }
+    if (shielded) return;
     for (let i = 0; i < this.holes.length; i++) {
       const h = this.holes[i];
       const dx = wrapDx(dd.x, h.x);
-      const dy = dd.y - 24 - h.y;
-      const rr = h.r * 0.85 + 12;
+      const dy = dd.y - CENTER - h.y;
+      const rr = h.r * 0.85 + 12 * HS;
       if (dx * dx + dy * dy < rr * rr) {
         dd.state = 'blackhole';
         dd.stateT = 0;
         dd.sx = dd.x;
         dd.sy = dd.y;
         dd.tx = h.x;
-        dd.ty = h.y + 24;
+        dd.ty = h.y + CENTER;
         dd.vx = 0;
         this.sfx('hole');
         return;
+      }
+    }
+  };
+
+  // 飞翼飞行中：撞到的怪物全部撞飞，黑洞直接被撞散
+  P.smash = function () {
+    const dd = this.dd;
+    const cy = dd.y - CENTER;
+    const R = 30 * HS; // 张开翅膀后的撞击半径
+    for (let i = 0; i < this.monsters.length; i++) {
+      const m = this.monsters[i];
+      if (m.dead) continue;
+      const dx = wrapDx(dd.x, m.x);
+      if (Math.abs(dx) < m.w / 2 + R && Math.abs(cy - m.y) < m.h / 2 + R) {
+        this.killMonster(m);
+        m.vy = -520;
+        m.vx = (dx >= 0 ? -1 : 1) * rand(120, 220);
+        this.smashFx(m.x, m.y);
+        this.sfx('smash');
+      }
+    }
+    for (let i = this.holes.length - 1; i >= 0; i--) {
+      const h = this.holes[i];
+      const dx = wrapDx(dd.x, h.x);
+      const dy = cy - h.y;
+      const rr = h.r + R;
+      if (dx * dx + dy * dy < rr * rr) {
+        this.holes.splice(i, 1);
+        this.smashFx(h.x, h.y);
+        this.sfx('smash');
       }
     }
   };
@@ -682,7 +800,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const dd = this.dd;
     if (dd.shootCd > 0) return;
     const bx = dd.x;
-    const by = dd.y - 32;
+    const by = dd.y - MOUTH;
     let ax;
     let ay;
     // 自动瞄准：屏幕里有能打到的怪物就直接朝它打，不管点在哪
@@ -704,7 +822,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     else if (a < lo) a = lo;
     const cx = Math.cos(a);
     const cy = Math.sin(a);
-    this.bullets.push({ x: bx + cx * 28, y: by + cy * 28, vx: cx * C.BULLET_V, vy: cy * C.BULLET_V, life: 1.2 });
+    this.bullets.push({ x: bx + cx * 28 * HS, y: by + cy * 28 * HS, vx: cx * C.BULLET_V, vy: cy * C.BULLET_V, life: 1.2 });
     dd.aim = a;
     dd.shootT = 0;
     dd.shootCd = C.SHOOT_CD;
@@ -855,6 +973,15 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         f.x += f.vx * dt;
         f.y += f.vy * dt;
         f.rot += f.vr * dt;
+      } else if (f.k === 'feather') {
+        // 羽毛：速度很快被空气拖慢，然后左右摆着慢慢往下飘
+        const d = Math.exp(-2.4 * dt);
+        f.vx *= d;
+        f.vy = 45 + (f.vy - 45) * d;
+        f.ph += f.w * dt;
+        f.x += (f.vx + Math.sin(f.ph) * 26) * dt;
+        f.y += f.vy * dt;
+        f.rot = f.rot0 + Math.sin(f.ph) * 0.7;
       } else if (f.k === 'fire' || f.k === 'streak') {
         f.vy *= Math.exp(-1.2 * dt);
         f.x += f.vx * dt;

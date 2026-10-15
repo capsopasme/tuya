@@ -1,5 +1,5 @@
 // 离线缓存：优先走网络，失败时用缓存，所以更新代码后刷新即可生效
-const CACHE = 'tuya-v1';
+const CACHE = 'tuya-v2';
 const FILES = [
   './',
   'index.html',
@@ -8,6 +8,7 @@ const FILES = [
   'js/audio.js',
   'js/world.js',
   'js/render.js',
+  'js/hero3d.js',
   'js/ui.js',
   'js/input.js',
   'js/main.js',
@@ -34,8 +35,11 @@ self.addEventListener('fetch', function (e) {
   e.respondWith(
     fetch(e.request)
       .then(function (res) {
-        const copy = res.clone();
-        caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+        // 只缓存成功的同源响应，别把 404 / 出错页面存进离线缓存
+        if (res.ok && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+        }
         return res;
       })
       .catch(function () { return caches.match(e.request); })
