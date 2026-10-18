@@ -76,6 +76,7 @@ function run(seed, opts) {
   DJ.seed(seed);
   const g = new DJ.Game();
   g.H = opts.H || 560;
+  g.chill = !!opts.chill;
   g.reset();
   let steps = 0;
   const maxSteps = (opts.seconds || 900) / DT;
@@ -317,6 +318,34 @@ function unitTests(fails) {
   if (g.dd.state !== 'dead') fails.push('护盾结束后撞到怪物应该会死：' + g.dd.state);
 }
 
+// ---------- 畅快模式：同样生成到 15000 分，统计道具和怪物数量 ----------
+function levelStats(chill) {
+  const st = { items: 0, fly: 0, hazards: 0, wings: 0, worstGap: 0 };
+  for (let seed = 1; seed <= 30; seed++) {
+    DJ.seed(seed * 104729);
+    const g = new DJ.Game();
+    g.H = 560;
+    g.chill = chill;
+    g.reset();
+    let seen = 0;
+    while (g.scoreAtY(g.topY) < 15000) {
+      g.genRow();
+      // 不跑物理，平台/怪物数组只增不减，直接数新增的
+      st.hazards += g.monsters.length + g.holes.length - seen;
+      seen = g.monsters.length + g.holes.length;
+    }
+    const mains = g.platforms.filter((p) => p.type !== 'brown').sort((a, b) => b.y - a.y);
+    for (let i = 1; i < mains.length; i++) st.worstGap = Math.max(st.worstGap, mains[i - 1].y - mains[i].y);
+    for (const p of g.platforms) {
+      if (!p.item) continue;
+      st.items++;
+      if (p.item.type === 'prop' || p.item.type === 'jet' || p.item.type === 'wings') st.fly++;
+      if (p.item.type === 'wings') st.wings++;
+    }
+  }
+  return st;
+}
+
 function median(a) {
   const s = a.slice().sort((x, y) => x - y);
   return s[Math.floor(s.length / 2)];
@@ -349,6 +378,25 @@ function main() {
     if (r.maxPlat > 120) fails.push('seed ' + r.seed + ' 平台数组过大 ' + r.maxPlat + '（没有及时回收？）');
   }
   if (median(fullScores) < 1500) fails.push('有怪物时中位数过低，开局难度可能过高');
+
+  // 畅快模式：道具明显更多、怪物明显更少，关卡同样可达，机器人跑起来数值正常
+  const nS = levelStats(false);
+  const cS = levelStats(true);
+  console.log('普通模式 30 关：道具 %d（飞行类 %d，飞翼 %d），怪物/黑洞 %d', nS.items, nS.fly, nS.wings, nS.hazards);
+  console.log('畅快模式 30 关：道具 %d（飞行类 %d，飞翼 %d），怪物/黑洞 %d', cS.items, cS.fly, cS.wings, cS.hazards);
+  if (!(cS.items > nS.items * 2)) fails.push('畅快模式道具没有明显变多');
+  if (!(cS.fly > nS.fly * 3)) fails.push('畅快模式飞行道具没有明显变多');
+  if (!(cS.hazards < nS.hazards * 0.5)) fails.push('畅快模式怪物没有明显变少');
+  if (cS.worstGap > gaps.jumpH * 0.8) fails.push('畅快模式平台间距过大');
+  const chillRuns = [];
+  for (let s = 200; s < 212; s++) chillRuns.push(run(s, { chill: true, seconds: 400 }));
+  const chillScores = chillRuns.map((r) => r.score);
+  console.log('畅快模式 12 局得分中位数 %d（普通有怪物 %d）', median(chillScores), median(fullScores));
+  for (const r of chillRuns) {
+    if (r.nan) fails.push('畅快 seed ' + r.seed + ' 出现 NaN');
+    if (r.maxPlat > 120) fails.push('畅快 seed ' + r.seed + ' 平台数组过大 ' + r.maxPlat);
+  }
+  if (!(median(chillScores) > median(fullScores))) fails.push('畅快模式得分中位数没有比普通模式高');
 
   unitTests(fails);
 

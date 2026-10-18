@@ -33,6 +33,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await tapButton(page, 'sound');
     check(await page.evaluate(() => DJ.app.settings.sound === false), '声音开关生效');
     await tapButton(page, 'sound');
+    // 畅快模式：默认关，切一下能开并存档，再切回来（后面的测试用普通模式）
+    check(await page.evaluate(() => DJ.app.settings.chill === false), '畅快模式默认关闭');
+    await tapButton(page, 'chill');
+    check(
+      await page.evaluate(() => DJ.app.settings.chill === true && JSON.parse(localStorage.getItem('tuya.settings')).chill === true),
+      '畅快模式开关生效并保存'
+    );
+    await tapButton(page, 'chill');
+    check(await page.evaluate(() => DJ.app.settings.chill === false), '畅快模式能关掉');
     // 3D 主角开关：默认开（WebGL 可用时），切一下能关、再切回来
     check(await page.evaluate(() => DJ.app.settings.hero3d === true && DJ.hero3d.active()), '3D 主角默认开启并且可用');
     await tapButton(page, 'hero');

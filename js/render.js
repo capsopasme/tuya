@@ -906,7 +906,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   }
 
   // ---------- HUD ----------
-  function hud(ctx, score) {
+  function hud(ctx, score, chill) {
     const bh = 34;
     ctx.fillStyle = 'rgba(190,225,232,0.66)';
     ctx.fillRect(0, 0, W, bh);
@@ -917,6 +917,21 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     ctx.fillText(String(score), 12, bh / 2 + 1);
+    // 畅快模式小标签（暂停键左边）
+    if (chill) {
+      ctx.font = DJ.font(13);
+      const tw = ctx.measureText('畅快').width + 12;
+      const tx = W - 48 - tw;
+      rr(ctx, tx, bh / 2 - 10, tw, 20, 10);
+      ctx.fillStyle = 'rgba(255,196,70,0.9)';
+      ctx.fill();
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = 'rgba(150,95,20,0.8)';
+      ctx.stroke();
+      ctx.fillStyle = '#6a3f0c';
+      ctx.textAlign = 'center';
+      ctx.fillText('畅快', tx + tw / 2, bh / 2 + 1);
+    }
     // 暂停按钮
     const px = W - 24;
     const py = bh / 2;
@@ -1211,7 +1226,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.fillRect(v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0);
     }
     letterbox(ctx);
-    hud(ctx, Math.round(DJ.shownScore === undefined ? g.score : DJ.shownScore));
+    hud(ctx, Math.round(DJ.shownScore === undefined ? g.score : DJ.shownScore), g.chill);
   };
 
   // 菜单里用的假小海星

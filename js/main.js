@@ -11,7 +11,7 @@
   const app = {
     game: game,
     // 老版本存过的 control（触屏/倾斜）设置已经没有意义，直接忽略
-    settings: Object.assign({ sound: true, sens: 1, hero3d: true }, DJ.store.get('settings', {})),
+    settings: Object.assign({ sound: true, sens: 1, hero3d: true, chill: false }, DJ.store.get('settings', {})),
     scores: DJ.store.get('scores', []),
     newBest: false,
   };
@@ -19,6 +19,7 @@
   if ([0, 1, 2].indexOf(app.settings.sens) < 0) app.settings.sens = 1;
   app.settings.sound = app.settings.sound !== false;
   app.settings.hero3d = app.settings.hero3d !== false;
+  app.settings.chill = app.settings.chill === true;
   if (!Array.isArray(app.scores)) app.scores = [];
   app.scores = app.scores.filter(function (s) {
     return typeof s === 'number' && isFinite(s) && s > 0;
@@ -90,6 +91,7 @@
 
   function startGame() {
     game.H = DJ.view.H;
+    game.chill = app.settings.chill;
     game.reset();
     app.newBest = false;
     I.reset();
@@ -168,6 +170,10 @@
       case 'hero':
         app.settings.hero3d = !app.settings.hero3d;
         DJ.hero3d.on = app.settings.hero3d;
+        save();
+        break;
+      case 'chill':
+        app.settings.chill = !app.settings.chill; // 下一局开始生效
         save();
         break;
       case 'sens':

@@ -28,6 +28,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   function Game() {
     this.H = DJ.MIN_H;
     this.best = 0;
+    this.chill = false; // 畅快模式：要在 reset() 之前设好，关卡生成时读取
     this.events = [];
     this.reset();
   }
@@ -152,9 +153,13 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const sc = this.scoreAtY(y);
     const half = C.PLAT_W / 2;
 
-    // 怪物 / 黑洞（两次之间至少隔 650px，且主平台会避开它）
+    // 怪物 / 黑洞（两次之间至少隔 650px，且主平台会避开它；畅快模式更晚、更稀）
+    const CH = this.chill ? DJ.CHILL : null;
+    const hzFrom = CH ? CH.HAZARD_FROM : 1100;
+    const hzGap = CH ? CH.HAZARD_GAP : 650;
+    const hzP = CH ? CH.HAZARD_P : 0.06;
     let avoidX = null;
-    if (sc > 1100 && this.lastHazardY - y > 650 && DJ.random() < 0.06) {
+    if (sc > hzFrom && this.lastHazardY - y > hzGap && DJ.random() < hzP) {
       const kinds = ['blob'];
       if (sc > 2200) kinds.push('flyer');
       if (sc > 3200) kinds.push('ufo');
@@ -184,11 +189,24 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     // 道具
     if (type === 'normal' || type === 'moving') {
       const r2 = DJ.random();
-      const pw = sc > 3500 ? 0.0035 : 0; // 飞翼：比喷气背包还稀有，3500 分以后才会出现
-      const pj = sc > 2500 ? 0.006 : 0;
-      const pp = sc > 1200 ? 0.012 : 0;
-      const pt = sc > 700 ? 0.016 : 0;
-      const ps = 0.06;
+      let pw, pj, pp, pt, ps;
+      if (CH) {
+        const I = CH.ITEMS;
+        const at = function (k) {
+          return sc > I[k][0] ? I[k][1] : 0;
+        };
+        pw = at('wings');
+        pj = at('jet');
+        pp = at('prop');
+        pt = at('tramp');
+        ps = at('spring');
+      } else {
+        pw = sc > 3500 ? 0.0035 : 0; // 飞翼：比喷气背包还稀有，3500 分以后才会出现
+        pj = sc > 2500 ? 0.006 : 0;
+        pp = sc > 1200 ? 0.012 : 0;
+        pt = sc > 700 ? 0.016 : 0;
+        ps = 0.06;
+      }
       let it = null;
       if (r2 < pw) it = 'wings';
       else if (r2 < pw + pj) it = 'jet';
