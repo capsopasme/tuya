@@ -20,8 +20,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     prop: { w: 24, h: 24 },
     jet: { w: 26, h: 32 },
     wings: { w: 36, h: 30 }, // 终极道具：飞翼
+    dark: { w: 38, h: 32 }, // 比飞翼更稀有更快：紫黑飞翼
   };
-  const FLYING = { propeller: 1, jetpack: 1, wings: 1 };
+  const FLYING = { propeller: 1, jetpack: 1, wings: 1, darkwings: 1 };
+  const WINGED = { wings: 1, darkwings: 1 };
   DJ.FLYING = FLYING;
 
   // 游戏逻辑：不依赖 DOM，可在 Node 中直接跑（见 tools/sim.js）
@@ -90,6 +92,18 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       spin: 0,
       scale: 1,
       shield: 0, // 飞翼结束后的护盾剩余时间
+      shieldDark: false, // 护盾是紫黑飞翼留下的（画成紫色）
+      lean: 0, // 身体倾斜角（弧度，向右为正），阻尼弹簧
+      leanV: 0,
+      leanAir: 1, // 倾斜的转轴：0 = 绕脚底（踩在平台上蓄力），1 = 绕身体中心（腾空），平滑过渡
+      roll: 0, // 紫黑飞翼时整个身体的旋转角，结束后弹簧回正
+      rollV: 0,
+      spinDir: 1,
+      axis: 0, // 这一步的倾斜输入（-1..1），蓄力时身体朝这个方向压
+      glide: 0, // 道具用完后的“慢落”剩余时间（只在下落阶段倒数）
+      glideK: 0, // 慢落强度（0..1，平滑）
+      fallK: 0, // 慢落实际生效的程度（还要看是不是已经在往下落）
+      glideCol: 'gold',
       sx: 0,
       sy: 0,
       tx: 0,
@@ -189,18 +203,20 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     // 道具
     if (type === 'normal' || type === 'moving') {
       const r2 = DJ.random();
-      let pw, pj, pp, pt, ps;
+      let pd, pw, pj, pp, pt, ps;
       if (CH) {
         const I = CH.ITEMS;
         const at = function (k) {
           return sc > I[k][0] ? I[k][1] : 0;
         };
+        pd = at('dark');
         pw = at('wings');
         pj = at('jet');
         pp = at('prop');
         pt = at('tramp');
         ps = at('spring');
       } else {
+        pd = sc > 5000 ? 0.0025 : 0; // 紫黑飞翼：比飞翼还稀有，5000 分以后才会出现
         pw = sc > 3500 ? 0.0035 : 0; // 飞翼：比喷气背包还稀有，3500 分以后才会出现
         pj = sc > 2500 ? 0.006 : 0;
         pp = sc > 1200 ? 0.012 : 0;
@@ -208,11 +224,12 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         ps = 0.06;
       }
       let it = null;
-      if (r2 < pw) it = 'wings';
-      else if (r2 < pw + pj) it = 'jet';
-      else if (r2 < pw + pj + pp) it = 'prop';
-      else if (r2 < pw + pj + pp + pt) it = 'tramp';
-      else if (r2 < pw + pj + pp + pt + ps) it = 'spring';
+      if (r2 < pd) it = 'dark';
+      else if (r2 < pd + pw) it = 'wings';
+      else if (r2 < pd + pw + pj) it = 'jet';
+      else if (r2 < pd + pw + pj + pp) it = 'prop';
+      else if (r2 < pd + pw + pj + pp + pt) it = 'tramp';
+      else if (r2 < pd + pw + pj + pp + pt + ps) it = 'spring';
       if (it) {
         const lim = half - ITEM[it].w / 2 - 2;
         p.item = { type: it, ox: rand(-lim, lim), w: ITEM[it].w, h: ITEM[it].h, used: false, fired: false, t: 0 };
@@ -280,16 +297,19 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     // 其余姿态量都做指数平滑，没有任何一帧是“瞬间切换”的
     const ease = (rate) => 1 - Math.exp(-rate * dt);
     dd.stretch += (clamp(-dd.vy / 3500, -0.12, 0.16) - dd.stretch) * ease(14);
-    dd.armPose += (clamp(dd.vy / 350, -1, 1) - dd.armPose) * ease(16);
+    // 慢落时两条手臂向上摊开，像跳伞一样兜着风
+    dd.armPose += (lerp(clamp(dd.vy / 350, -1, 1), -0.5, dd.fallK) - dd.armPose) * ease(dd.fallK > 0.05 ? 6 : 16);
     const lookT = dd.shootT < 0.35 ? Math.sign(Math.cos(dd.aim)) * 0.9 : clamp(dd.vx / 140, -1, 1);
     dd.look += (lookT - dd.look) * ease(12);
     if (dd.shield > 0) dd.shield = Math.max(0, dd.shield - dt);
     const st = dd.state;
     const flying = FLYING[st] === 1;
+    dd.axis = clamp(input.axis || 0, -1, 1);
+    this.posture(dt, st, flying);
 
     // 水平方向
     if (st === 'normal' || flying) {
-      const vk = st === 'wings' ? C.WING_VX : 1;
+      const vk = st === 'wings' ? C.WING_VX : st === 'darkwings' ? C.DARK_VX : 1;
       const target = clamp(input.axis || 0, -1, 1) * C.MAX_VX * vk;
       const a = C.ACCEL * vk * dt;
       dd.vx += clamp(target - dd.vx, -a, a);
@@ -303,27 +323,37 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
     // 垂直方向
     if (st === 'normal') {
-      dd.vy = Math.min(dd.vy + C.GRAVITY * dt, C.MAX_FALL);
+      // 道具用完后的慢落：只在快到顶点、开始往下掉的时候减小重力（上升段完全不变，不会因此飞得更高），
+      // 并压低最大下落速度；最后 0.6 秒慢慢恢复正常，落到平台上立刻结束
+      if (dd.glide > 0 && dd.vy > -220) dd.glide = Math.max(0, dd.glide - dt);
+      dd.glideK += ((dd.glide > 0 ? Math.min(1, dd.glide / 0.6) : 0) - dd.glideK) * ease(8);
+      if (dd.glideK < 0.002) dd.glideK = 0;
+      dd.fallK = dd.glideK * clamp((dd.vy + 320) / 320, 0, 1);
+      const maxFall = lerp(C.MAX_FALL, C.GLIDE_FALL, dd.glideK);
+      dd.vy += C.GRAVITY * lerp(1, C.GLIDE_G, dd.fallK) * dt;
+      if (dd.vy > maxFall) dd.vy = Math.max(maxFall, dd.vy - 2600 * dt);
       dd.y += dd.vy * dt;
       if (dd.vy > 0) this.landing();
     } else if (flying) {
+      dd.fallK = dd.glideK = dd.glide = 0;
       const prop = st === 'propeller';
-      const wings = st === 'wings';
-      const T = prop ? C.PROP_T : wings ? C.WING_T : C.JET_T;
-      const V = prop ? C.PROP_V : wings ? C.WING_V : C.JET_V;
+      const dark = st === 'darkwings';
+      const wings = WINGED[st] === 1;
+      const T = prop ? C.PROP_T : dark ? C.DARK_T : wings ? C.WING_T : C.JET_T;
+      const V = prop ? C.PROP_V : dark ? C.DARK_V : wings ? C.WING_V : C.JET_V;
       const ramp = wings ? 1 : 0.7; // 最后这段时间慢慢减速
       const left = T - dd.stateT;
       const tv = -(left > ramp ? V : lerp(250, V, Math.max(0, left) / ramp));
-      const acc = wings ? 3600 : 2600;
+      const acc = dark ? 4600 : wings ? 3600 : 2600;
       dd.vy += clamp(tv - dd.vy, -acc * dt, acc * dt);
       dd.y += dd.vy * dt;
       this.whirT -= dt;
       if (this.whirT <= 0) {
-        this.whirT = wings ? 0.2 : 0.16;
-        this.sfx(prop ? 'prop' : wings ? 'flap' : 'jet');
+        this.whirT = dark ? 0.17 : wings ? 0.2 : 0.16;
+        this.sfx(prop ? 'prop' : dark ? 'darkflap' : wings ? 'flap' : 'jet');
       }
       if (wings) {
-        this.ghostT = Math.max(this.ghostT, 0.05); // 一路拖着金色残影
+        this.ghostT = Math.max(this.ghostT, 0.05); // 一路拖着金色（紫黑飞翼是紫色、跟着一起转的）残影
         this.smash();
       }
       if (left <= 0) {
@@ -332,10 +362,15 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         if (wings) {
           // 收翅膀前最后用力扇一下，再给一小段护盾，免得一落下来就撞上怪物
           dd.shield = C.SHIELD_T;
+          dd.shieldDark = dark;
           this.bounce(C.JUMP_V * 1.15, 1.6);
-          this.wingEndFx();
-          this.sfx('flap');
+          if (dark) this.darkEndFx();
+          else this.wingEndFx();
+          this.sfx(dark ? 'darkflap' : 'flap');
         }
+        // 道具用完：接下来的下落是慢慢飘下来的
+        dd.glide = C.GLIDE_T;
+        dd.glideCol = dark ? 'dark' : wings ? 'gold' : prop ? 'sky' : 'fire';
       }
     } else if (st === 'dead') {
       dd.vy = Math.min(dd.vy + C.GRAVITY * dt, 1300);
@@ -391,6 +426,48 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     }
   };
 
+  // 身体倾斜 + 紫黑飞翼的旋转（都是阻尼弹簧，纯视觉，不影响碰撞）
+  //  - 空中：身体朝水平速度的方向歪一点（C.LEAN）
+  //  - 落到平台上的那一下（腿被压扁的 0.16 秒）是“蓄力”：身体朝倾斜手机的方向狠狠压下去（C.LEAN_CHARGE），
+  //    起跳时弹簧把它甩回来、带一点过冲，像真的侧身发力蹬出去
+  //  - 慢落时左右轻轻摆，像荡着降落伞
+  const LEAN_K = 420;
+  const LEAN_C = 17;
+  const CHARGE_T = 0.16;
+  P.posture = function (dt, st, flying) {
+    const dd = this.dd;
+    let target = 0;
+    let airT = 1;
+    if (st === 'normal' || flying) {
+      const vLean = clamp(dd.vx / C.MAX_VX, -1, 1) * C.LEAN;
+      target = vLean;
+      if (st === 'normal' && dd.bounceT < CHARGE_T) {
+        const k = Math.sin((dd.bounceT / CHARGE_T) * Math.PI); // 0 -> 1 -> 0
+        target = lerp(vLean, dd.axis * C.LEAN_CHARGE, k);
+        airT = 0;
+      }
+      if (st === 'darkwings') target *= 0.5; // 自己在转，倾斜收一收
+      target += Math.sin(dd.t * 2.6) * 0.16 * dd.fallK;
+    }
+    dd.leanV += (LEAN_K * (target - dd.lean) - LEAN_C * dd.leanV) * dt;
+    dd.lean = clamp(dd.lean + dd.leanV * dt, -0.8, 0.8);
+    dd.leanAir += (airT - dd.leanAir) * (1 - Math.exp(-(airT > dd.leanAir ? 9 : 30) * dt));
+
+    // 旋转：飞行中加速到 DARK_SPIN；结束后朝“前方最近的一个整圈”减速回正，带一点过冲
+    if (st === 'darkwings') {
+      const ramp = clamp(dd.stateT / 0.35, 0, 1);
+      dd.rollV += (C.DARK_SPIN * dd.spinDir * ramp - dd.rollV) * (1 - Math.exp(-6 * dt));
+      dd.roll += dd.rollV * dt;
+    } else if (dd.roll !== 0 || dd.rollV !== 0) {
+      const tgt = Math.round((dd.roll + dd.rollV * 0.2) / TAU) * TAU;
+      dd.rollV += (110 * (tgt - dd.roll) - 15 * dd.rollV) * dt;
+      dd.roll += dd.rollV * dt;
+      if (Math.abs(dd.roll - tgt) < 0.003 && Math.abs(dd.rollV) < 0.08) dd.roll = dd.rollV = 0;
+    }
+    if (dd.roll > Math.PI) dd.roll -= TAU;
+    else if (dd.roll < -Math.PI) dd.roll += TAU;
+  };
+
   P.beginFalling = function () {
     this.phase = 'falling';
     this.phaseT = 0;
@@ -439,6 +516,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       const sp = o.s0 + (o.s1 - o.s0) * rnd();
       this.addFx({
         k: 'part',
+        delay: o.delay || 0,
         shape: o.shapes[(rnd() * o.shapes.length) | 0],
         x: x + (rnd() - 0.5) * (o.spread || 0),
         y: y,
@@ -459,19 +537,38 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   };
   P.addGhost = function () {
     const dd = this.dd;
-    this.addFx({ k: 'ghost', d: Object.assign({}, dd), x: dd.x, y: dd.y, col: dd.state === 'wings' ? '#ffe07a' : null, life: 0.3 });
+    const col = dd.state === 'darkwings' ? '#a46bff' : dd.state === 'wings' ? '#ffe07a' : null;
+    this.addFx({ k: 'ghost', d: Object.assign({}, dd), x: dd.x, y: dd.y, col: col, life: dd.state === 'darkwings' ? 0.26 : 0.3 });
   };
   // 一根飘落的羽毛：左右摆着慢慢往下飘
-  P.feather = function (x, y, vx, vy, life) {
-    this.addFx({ k: 'feather', x: x, y: y, vx: vx, vy: vy, ph: rnd() * TAU, w: 4 + rnd() * 3, r: 4 + rnd() * 2.5, rot: rnd() * TAU, rot0: rnd() * TAU, life: life });
+  P.feather = function (x, y, vx, vy, life, dark, delay) {
+    this.addFx({ k: 'feather', dark: !!dark, delay: delay || 0, x: x, y: y, vx: vx, vy: vy, ph: rnd() * TAU, w: 4 + rnd() * 3, r: (4 + rnd() * 2.5) * (dark ? 1.1 : 1), rot: rnd() * TAU, rot0: rnd() * TAU, life: life });
   };
   // 飞翼撞碎怪物 / 黑洞的瞬间
   P.smashFx = function (x, y) {
+    if (this.dd.state === 'darkwings') {
+      this.shockwave(x, y, { vr: 480, w: 6, col: '170,90,255', flat: 1, life: 0.38 });
+      this.shockwave(x, y, { vr: 340, w: 2.5, col: '125,240,255', flat: 1, life: 0.3, delay: 0.04 });
+      this.addFx({ k: 'glow', x: x, y: y, r: 56, col: '190,120,255', life: 0.22 });
+      this.burst(x, y, 14, { a0: 0, a1: TAU, s0: 140, s1: 420, g: 600, drag: 1.3, r0: 3.5, r1: 6.5, l0: 0.4, l1: 0.7, spread: 10, shapes: ['star', 'dot'], cols: ['#c77dff', '#ff6ef0', '#7df9ff', '#ffffff'] });
+      this.popText(x, y - 26, 'POW!', 24, '#c77dff');
+      this.shake = Math.max(this.shake, 6);
+      return;
+    }
     this.shockwave(x, y, { vr: 420, w: 5, col: '255,214,92', flat: 1, life: 0.36 });
     this.addFx({ k: 'glow', x: x, y: y, r: 50, col: '255,240,170', life: 0.2 });
     this.burst(x, y, 12, { a0: 0, a1: TAU, s0: 120, s1: 380, g: 700, drag: 1.2, r0: 3.5, r1: 6.5, l0: 0.4, l1: 0.7, spread: 10, shapes: ['star', 'dot'], cols: ['#ffd93b', '#ffffff', '#ff8a5c'] });
     this.popText(x, y - 26, 'POW!', 24, '#ff8a3d');
     this.shake = Math.max(this.shake, 5);
+  };
+  // 紫黑飞翼收翅膀：一圈紫色冲击波 + 霓虹细环，抖落一把黑紫色羽毛
+  P.darkEndFx = function () {
+    const dd = this.dd;
+    const y = dd.y - CENTER;
+    this.shockwave(dd.x, y, { vr: 360, w: 5, col: '170,90,255', flat: 1, life: 0.4 });
+    this.shockwave(dd.x, y, { vr: 260, w: 2, col: '125,240,255', flat: 1, life: 0.34, delay: 0.05 });
+    this.addFx({ k: 'spiral', x: dd.x, y: y, n: 4, R: 70, w: 3, a0: rnd() * TAU, spin: -5, flat: 1, col: '199,125,255', life: 0.5 });
+    for (let i = 0; i < 10; i++) this.feather(dd.x + (rnd() - 0.5) * 44, y + (rnd() - 0.5) * 18, (rnd() - 0.5) * 240, -40 + rnd() * 120, 1.1 + rnd() * 0.6, true);
   };
   // 飞翼时间到，翅膀最后扇一下、抖落一把羽毛
   P.wingEndFx = function () {
@@ -534,6 +631,39 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       this.flash = Math.max(this.flash, 0.26);
       this.flashCol = '255,200,120';
       this.ghostT = 0.4;
+    } else if (type === 'dark') {
+      // 紫黑飞翼：先“吸”——一圈紫色星屑被吸进小海星，0.15 秒后再“炸”——
+      // 深紫色的粗冲击波外面套霓虹紫、品红、青色三圈细环，五臂漩涡甩开，满天星屑和黑紫色羽毛，屏幕暗下去一下
+      const cols = ['#c77dff', '#9d4edd', '#ff6ef0', '#7df9ff', '#ffffff'];
+      const D = 0.15;
+      for (let i = 0; i < 20; i++) {
+        const a = (i / 20) * TAU + rnd() * 0.2;
+        const r = 95 + rnd() * 30;
+        this.addFx({ k: 'part', shape: i % 3 ? 'dot' : 'star', x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: (-Math.cos(a) * r) / D, vy: (-Math.sin(a) * r) / D, g: 0, drag: 0, r: 2.6 + rnd() * 2, rot: rnd() * TAU, vr: 8, col: cols[i % 4], life: D });
+      }
+      this.addFx({ k: 'glow', x: x, y: y, r: 60, col: '120,40,220', life: D + 0.05 });
+      this.shockwave(x, y, { vr: 820, w: 13, col: '45,12,75', flat: 1, life: 0.6, delay: D });
+      this.shockwave(x, y, { vr: 720, w: 6, col: '170,90,255', flat: 1, life: 0.55, delay: D + 0.03 });
+      this.shockwave(x, y, { vr: 560, w: 3.5, col: '255,110,235', flat: 1, life: 0.5, delay: D + 0.08 });
+      this.shockwave(x, y, { vr: 980, w: 2.5, col: '125,240,255', flat: 1, life: 0.45, delay: D + 0.05 });
+      this.shockwave(x, y + CENTER, { vr: 1000, w: 6, col: '150,70,255', life: 0.5, delay: D });
+      this.addFx({ k: 'glow', x: x, y: y, r: 170, col: '150,70,255', life: 0.42, delay: D });
+      this.addFx({ k: 'beam', x: x, y: y + 40, w: 80, h: 620, col: '150,80,255', life: 0.6, delay: D });
+      this.addFx({ k: 'spiral', x: x, y: y, n: 5, R: 140, w: 4, a0: rnd() * TAU, spin: 6, flat: 1, col: '199,125,255', life: 0.7, delay: D });
+      this.addFx({ k: 'spiral', x: x, y: y, n: 5, R: 110, w: 2, a0: rnd() * TAU, spin: 6, flat: 1, col: '255,110,235', life: 0.6, delay: D + 0.04 });
+      this.addFx({ k: 'rays', x: x, y: y, n: 24, a0: 0, a1: (TAU * 23) / 24, R: 185, w: 4.5, col: '199,125,255', life: 0.5, delay: D });
+      this.addFx({ k: 'rays', x: x, y: y, n: 12, a0: 0.13, a1: 0.13 + (TAU * 11) / 12, R: 130, w: 2.5, col: '255,255,255', life: 0.42, delay: D });
+      this.burst(x, y, 26, { delay: D, a0: 0, a1: TAU, s0: 200, s1: 620, g: 220, drag: 1.5, r0: 3.5, r1: 7.5, l0: 0.6, l1: 1.2, spread: 12, shapes: ['star', 'star', 'dot'], cols: cols });
+      for (let i = 0; i < 16; i++) {
+        const a = rnd() * TAU;
+        const sp = 140 + rnd() * 280;
+        this.feather(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 1.2 + rnd() * 0.7, true, D);
+      }
+      this.addFx({ k: 'text', x: x, y: y - 58, txt: '暗翼!!', size: 36, col: '#c77dff', rot: (rnd() - 0.5) * 0.3, life: 0.9, delay: D });
+      this.shake = Math.max(this.shake, 11);
+      this.flash = Math.max(this.flash, 0.42);
+      this.flashCol = '70,20,130';
+      this.ghostT = 0.7;
     } else if (type === 'wings') {
       // 终极道具：金色 + 白色 + 粉色三层冲击波、巨型光柱、满天星星和羽毛、金色闪屏、狠狠一震
       const cols = ['#ffe27a', '#fff6c8', '#ffffff', '#ffb3e0', '#9be8ff'];
@@ -559,7 +689,13 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     }
   };
 
-  // 每步都跑的“持续”特效：残影、喷气背包的火焰尾迹、螺旋桨扇出来的风
+  const GLIDE_COLS = {
+    gold: ['#ffe27a', '#fff6c8', '#ffffff'],
+    dark: ['#c77dff', '#ff9ef5', '#a0f6ff'],
+    sky: ['#9fdcff', '#ffffff', '#ffe27a'],
+    fire: ['#ffd27a', '#ffffff', '#ffb37a'],
+  };
+  // 每步都跑的“持续”特效：残影、喷气背包的火焰尾迹、螺旋桨扇出来的风、慢落的光点
   P.trailFx = function (dt) {
     const dd = this.dd;
     if (this.ghostT > 0) {
@@ -570,10 +706,38 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         this.addGhost();
       }
     }
-    if (FLYING[dd.state] !== 1) return;
     if (this.fx.length > 260) return;
+    if (dd.state === 'normal' && dd.fallK > 0.4) {
+      // 慢落：身后一路飘起几颗很淡的小光点（颜色跟刚用完的道具走），不抢画面
+      this.trailT -= dt;
+      if (this.trailT > 0) return;
+      this.trailT = 0.06;
+      const cs = GLIDE_COLS[dd.glideCol] || GLIDE_COLS.gold;
+      this.addFx({
+        k: 'part', shape: rnd() < 0.3 ? 'star' : 'dot', x: dd.x + (rnd() - 0.5) * 30 * HS, y: dd.y - CENTER + (rnd() - 0.5) * 20,
+        vx: (rnd() - 0.5) * 30, vy: -40 - rnd() * 40, g: -30, drag: 1.2, r: 2.2 + rnd() * 2, rot: rnd() * TAU, vr: (rnd() - 0.5) * 6,
+        col: cs[(rnd() * cs.length) | 0], life: 0.6 + rnd() * 0.4,
+      });
+      if (dd.glideCol === 'dark' && rnd() < 0.18) this.feather(dd.x + (rnd() - 0.5) * 30, dd.y - CENTER, (rnd() - 0.5) * 60, -30, 1, true);
+      return;
+    }
+    if (FLYING[dd.state] !== 1) return;
     this.trailT -= dt;
     if (this.trailT > 0) return;
+    if (dd.state === 'darkwings') {
+      this.trailT = 0.024;
+      const s = rnd() < 0.5 ? -1 : 1;
+      if (rnd() < 0.4) this.feather(dd.x + s * (20 + rnd() * 24) * HS, dd.y - CENTER + (rnd() - 0.5) * 10, s * (40 + rnd() * 70), 160 + rnd() * 160, 0.8 + rnd() * 0.5, true);
+      // 星屑螺旋：沿着身体的旋转方向甩出去
+      const a = dd.roll + rnd() * 0.6;
+      const r = 16 * HS;
+      this.addFx({
+        k: 'part', shape: rnd() < 0.55 ? 'star' : 'dot', x: dd.x + Math.cos(a) * r, y: dd.y - CENTER + Math.sin(a) * r,
+        vx: -Math.sin(a) * 120 * dd.spinDir + (rnd() - 0.5) * 30, vy: 180 + rnd() * 160, g: 0, drag: 1.6, r: 2 + rnd() * 2.2, rot: rnd() * TAU, vr: (rnd() - 0.5) * 14,
+        col: ['#c77dff', '#ff6ef0', '#7df9ff', '#ffffff', '#9d4edd'][(rnd() * 5) | 0], life: 0.45 + rnd() * 0.3,
+      });
+      return;
+    }
     if (dd.state === 'jetpack') {
       this.trailT = 0.022;
       // 火焰从两个油罐的喷口喷出（油罐在身体两侧约 19 个单位处）
@@ -598,6 +762,8 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
   P.bounce = function (v, kick) {
     const dd = this.dd;
+    // 脚一下子被平台挡住，身体靠惯性往前栽一下
+    dd.leanV += clamp(dd.vx / C.MAX_VX, -1.5, 1.5) * 2.5;
     // 速度从“下落”突变成“上冲”，肚子跟不上，先被甩下去再弹回来（kick 是额外放大的力度）
     dd.bellyV += (v + dd.vy) * C.BELLY_GAIN * (kick || 1);
     dd.vy = -v;
@@ -649,12 +815,17 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         this.bounce(C.TRAMP_V, 2);
         this.sfx('tramp');
       }
+      // 弹簧 / 蹦床也算道具：冲到顶以后慢慢飘下来
+      dd.glide = C.GLIDE_T * 0.8;
+      dd.glideCol = best.it.type === 'spring' ? 'gold' : 'fire';
       return;
     }
     dd.y = best.sy;
     p.dipV += 150; // 平台被踩得往下沉一点再弹回来
     this.puff(dd.x, best.sy, 4, 70);
-    this.bounce(C.JUMP_V);
+    dd.glide = 0; // 落回普通平台，慢落结束
+    // 蓄力：倾斜手机越狠，落地时身体压得越扁（起跳那一下肚子甩得也越狠）
+    this.bounce(C.JUMP_V, 1 + 0.45 * Math.abs(dd.axis || 0));
     this.sfx('jump');
     if (p.type === 'white') {
       p.dead = true;
@@ -676,17 +847,19 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     for (let i = 0; i < this.platforms.length; i++) {
       const p = this.platforms[i];
       const it = p.item;
-      if (!it || it.used || (it.type !== 'prop' && it.type !== 'jet' && it.type !== 'wings')) continue;
+      if (!it || it.used || (it.type !== 'prop' && it.type !== 'jet' && it.type !== 'wings' && it.type !== 'dark')) continue;
       const dx = wrapDx(dd.x, p.x + it.ox);
       if (Math.abs(dx) < it.w / 2 + HALF_W - 3 && dd.y > p.y - it.h - 4 && dd.y - BODY_H < p.y) {
         it.used = true;
-        dd.state = it.type === 'prop' ? 'propeller' : it.type === 'jet' ? 'jetpack' : 'wings';
+        dd.state = it.type === 'prop' ? 'propeller' : it.type === 'jet' ? 'jetpack' : it.type === 'dark' ? 'darkwings' : 'wings';
         dd.stateT = 0;
-        dd.vy = Math.min(dd.vy, it.type === 'wings' ? -450 : -300);
+        dd.vy = Math.min(dd.vy, it.type === 'dark' ? -560 : it.type === 'wings' ? -450 : -300);
+        dd.glide = dd.glideK = dd.fallK = 0;
+        if (it.type === 'dark') dd.spinDir = dd.vx < -20 ? -1 : dd.vx > 20 ? 1 : dd.facing || 1;
         this.whirT = 0;
         this.trailT = 0;
         this.itemFx(it.type, dd.x, dd.y - CENTER);
-        this.sfx(it.type === 'wings' ? 'wings' : 'pickup');
+        this.sfx(it.type === 'dark' ? 'darkwings' : it.type === 'wings' ? 'wings' : 'pickup');
         return;
       }
     }
@@ -716,6 +889,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       if (Math.abs(dx) < m.w / 2 + hw - 4 && bot > m.y - m.h / 2 && top < m.y + m.h / 2) {
         if (dd.vy > 0 && dd.prevY <= m.y - m.h * 0.1) {
           this.killMonster(m);
+          dd.glide = 0;
           this.bounce(C.STOMP_V);
           this.sfx('stomp');
         } else if (shielded) {
@@ -756,7 +930,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   P.smash = function () {
     const dd = this.dd;
     const cy = dd.y - CENTER;
-    const R = 30 * HS; // 张开翅膀后的撞击半径
+    const R = (dd.state === 'darkwings' ? 34 : 30) * HS; // 张开翅膀后的撞击半径
     for (let i = 0; i < this.monsters.length; i++) {
       const m = this.monsters[i];
       if (m.dead) continue;

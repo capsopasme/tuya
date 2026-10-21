@@ -114,6 +114,24 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       tone('sine', 110, 330, 0.5, 0.25);
       noise(0.35, 0.18, 1200);
     },
+    // 紫黑飞翼：先“吸”一口气（高处往下的滑音 + 嘶嘶声），再一声低沉的爆响，接一串冷色调的和声小调琶音
+    darkwings: function () {
+      tone('sine', 1500, 160, 0.16, 0.12);
+      noise(0.15, 0.1, 3200);
+      tone('sine', 62, 38, 0.8, 0.45, 0.15);
+      tone('sawtooth', 124, 62, 0.45, 0.07, 0.15);
+      noise(0.45, 0.26, 800, 0.15);
+      const notes = [440, 523, 659, 831, 988, 1319];
+      for (let i = 0; i < notes.length; i++) {
+        tone('triangle', notes[i], notes[i], 0.2, 0.17, 0.2 + i * 0.05);
+        tone('sine', notes[i] * 1.5, notes[i] * 1.5, 0.16, 0.05, 0.22 + i * 0.05);
+      }
+    },
+    darkflap: function () {
+      noise(0.18, 0.2, 480);
+      tone('sine', 110, 55, 0.18, 0.1);
+      tone('triangle', 880, 660, 0.06, 0.02);
+    },
     flap: function () {
       noise(0.16, 0.2, 700);
       tone('sine', 150, 90, 0.14, 0.08);
@@ -142,9 +160,23 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     },
   };
 
+  let lastPlay = 0;
   A.play = function (name) {
     if (!A.enabled || !ac) return;
     const f = S[name];
-    if (f) f();
+    if (!f) return;
+    lastPlay = Date.now();
+    if (ac.state === 'suspended') {
+      const r = ac.resume();
+      if (r && r.catch) r.catch(function () {});
+    }
+    f();
+  };
+
+  // 省电：不在游戏中、而且 3 秒没出声，就把音频设备挂起（安卓上一个一直开着的 AudioContext 会让音频硬件常驻唤醒）
+  A.idle = function (playing) {
+    if (!ac || playing || ac.state !== 'running' || Date.now() - lastPlay < 3000) return;
+    const r = ac.suspend();
+    if (r && r.catch) r.catch(function () {});
   };
 })();

@@ -257,7 +257,7 @@ function unitTests(fails) {
   function flyHeight(type) {
     const g2 = bareGame(7);
     const p = g2.addPlatform('normal', 160, 450);
-    p.item = { type: type, ox: 0, w: type === 'wings' ? 36 : 26, h: 30, used: false, fired: false, t: 0 };
+    p.item = { type: type, ox: 0, w: type === 'dark' ? 38 : type === 'wings' ? 36 : 26, h: 30, used: false, fired: false, t: 0 };
     g2.dd.x = 160;
     g2.dd.y = 440;
     g2.dd.prevY = 440;
@@ -295,6 +295,93 @@ function unitTests(fails) {
   if (!mon.dead) fails.push('飞翼没有撞碎路上的怪物');
   if (g.holes.length) fails.push('飞翼没有撞散路上的黑洞');
   if (g.dd.state !== 'wings') fails.push('飞翼飞行中被怪物/黑洞打断了：' + g.dd.state);
+
+  // 紫黑飞翼：比白色飞翼飞得更快更高；飞行中身体一直在转；结束后带紫色护盾，旋转弹回正位
+  {
+    const dark = flyHeight('dark');
+    console.log('飞行高度：紫黑飞翼 %d px（白色飞翼的 %s 倍）', Math.round(dark.h), (dark.h / wing.h).toFixed(2));
+    if (dark.st !== 'darkwings') fails.push('拿到紫黑飞翼后没有进入 darkwings 状态：' + dark.st);
+    if (!(dark.h > wing.h * 1.2)) fails.push('紫黑飞翼应该比白色飞翼飞得更高：' + dark.h + ' vs ' + wing.h);
+    if (!dark.g.dd.shieldDark) fails.push('紫黑飞翼结束后的护盾不是紫色的');
+    const g3 = bareGame(10);
+    g3.dd.x = 160;
+    g3.dd.y = 400;
+    g3.dd.state = 'darkwings';
+    g3.dd.stateT = 0;
+    g3.dd.vy = -900;
+    let turned = 0;
+    let prevR = g3.dd.roll;
+    let maxVy = 0;
+    for (let i = 0; i < 120 * 2; i++) {
+      g3.update(DT, { axis: 0, shots: [] });
+      let d = g3.dd.roll - prevR;
+      if (d > Math.PI) d -= Math.PI * 2;
+      else if (d < -Math.PI) d += Math.PI * 2;
+      turned += d;
+      prevR = g3.dd.roll;
+      maxVy = Math.min(maxVy, g3.dd.vy);
+    }
+    console.log('紫黑飞翼 2 秒内转了 %s 圈，最高速度 %d px/s', (Math.abs(turned) / (Math.PI * 2)).toFixed(1), Math.round(-maxVy));
+    if (Math.abs(turned) < Math.PI * 2 * 3) fails.push('紫黑飞翼飞行中小海星没有转起来：' + turned);
+    if (!(-maxVy > C.WING_V * 1.2)) fails.push('紫黑飞翼速度不够快：' + -maxVy);
+    // 结束后 1.5 秒内旋转要稳稳停在正位
+    g3.dd.stateT = C.DARK_T;
+    for (let i = 0; i < 120 * 1.5; i++) g3.update(DT, { axis: 0, shots: [] });
+    if (g3.dd.state !== 'normal' || Math.abs(g3.dd.roll) > 0.02) fails.push('紫黑飞翼结束后没有回正：' + g3.dd.state + ' roll=' + g3.dd.roll);
+  }
+
+  // 慢落：道具用完后的下落比普通下落慢，落到平台上就恢复正常
+  {
+    const fallSpeed = function (glide) {
+      const g4 = bareGame(11);
+      g4.dd.x = 160;
+      g4.dd.y = 300;
+      g4.dd.vy = 0;
+      g4.dd.glide = glide ? C.GLIDE_T : 0;
+      g4.dd.glideK = glide ? 1 : 0;
+      for (let i = 0; i < 120 * 0.8; i++) g4.update(DT, { axis: 0, shots: [] });
+      return g4.dd.vy;
+    };
+    const vN = fallSpeed(false);
+    const vG = fallSpeed(true);
+    console.log('下落 0.8 秒后的速度：普通 %d，慢落 %d px/s', Math.round(vN), Math.round(vG));
+    if (!(vG < vN * 0.6)) fails.push('慢落没有明显变慢：' + vG + ' vs ' + vN);
+    // 拿喷气背包飞完之后应该进入慢落
+    if (!(jet.g.dd.glide > 0 || jet.g.dd.glideK > 0)) fails.push('喷气背包用完后没有进入慢落');
+    // 弹簧把人弹起来时上升段不受影响（不会因为慢落飞得更高）
+    const g5 = bareGame(12);
+    const sp = g5.addPlatform('normal', 160, 450);
+    sp.item = { type: 'spring', ox: 0, w: 18, h: 14, used: false, fired: false, t: 0 };
+    g5.dd.x = 160;
+    g5.dd.y = g5.dd.prevY = 430;
+    g5.dd.vy = 200;
+    let topY = 999;
+    for (let i = 0; i < 120 * 1.5; i++) {
+      g5.update(DT, { axis: 0, shots: [] });
+      topY = Math.min(topY, g5.dd.y);
+    }
+    const rise = 436 - topY;
+    const ideal = (C.SPRING_V * C.SPRING_V) / (2 * C.GRAVITY);
+    if (Math.abs(rise - ideal) > ideal * 0.08) fails.push('弹簧起跳高度被慢落改变了：' + rise.toFixed(0) + ' vs ' + ideal.toFixed(0));
+    if (!(g5.dd.glide > 0 || g5.dd.fallK > 0)) fails.push('弹簧之后没有慢落');
+  }
+
+  // 蓄力：落地瞬间身体朝倾斜方向压下去
+  {
+    const g6 = bareGame(13);
+    g6.addPlatform('normal', 160, 400);
+    g6.dd.x = 160;
+    g6.dd.y = g6.dd.prevY = 396;
+    g6.dd.vy = 300;
+    g6.dd.vx = 0;
+    let maxLean = 0;
+    for (let i = 0; i < 18; i++) {
+      g6.update(DT, { axis: 1, shots: [] });
+      maxLean = Math.max(maxLean, g6.dd.lean);
+    }
+    console.log('向右倾斜落地蓄力：身体最大倾斜 %s°', ((maxLean * 180) / Math.PI).toFixed(1));
+    if (!(maxLean > 0.2)) fails.push('落地蓄力时身体没有朝倾斜方向压下去：' + maxLean);
+  }
 
   // 护盾：落地后侧面撞到怪物不会死，怪物被撞飞；黑洞也吸不走
   g = bareGame(9);

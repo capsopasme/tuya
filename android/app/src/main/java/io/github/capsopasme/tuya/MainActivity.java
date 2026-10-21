@@ -9,6 +9,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
+import android.view.Display;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -38,6 +39,35 @@ public class MainActivity extends Activity implements SensorEventListener {
     // 向右倾斜为正（度）。由传感器线程写、JS 桥线程读
     private volatile float tiltDeg = 0f;
 
+    /** 暴露给网页：window.NativeApp.setFps(60 | 120)，设置里切换帧率时调用，让屏幕本身也切到对应刷新率（60Hz 更省电） */
+    public final class AppBridge {
+        @JavascriptInterface
+        public void setFps(final float hz) {
+            runOnUiThread(() -> applyRefreshRate(hz));
+        }
+    }
+
+    // 选一个分辨率和当前一样、刷新率最接近 hz 的显示模式；preferredDisplayModeId 比 preferredRefreshRate 更能让系统照办
+    private void applyRefreshRate(float hz) {
+        Window w = getWindow();
+        WindowManager.LayoutParams lp = w.getAttributes();
+        lp.preferredRefreshRate = hz;
+        try {
+            Display d = getDisplay();
+            if (d != null) {
+                Display.Mode cur = d.getMode();
+                Display.Mode best = null;
+                for (Display.Mode m : d.getSupportedModes()) {
+                    if (m.getPhysicalWidth() != cur.getPhysicalWidth() || m.getPhysicalHeight() != cur.getPhysicalHeight()) continue;
+                    if (best == null || Math.abs(m.getRefreshRate() - hz) < Math.abs(best.getRefreshRate() - hz)) best = m;
+                }
+                if (best != null) lp.preferredDisplayModeId = best.getModeId();
+            }
+        } catch (RuntimeException ignored) {
+        }
+        w.setAttributes(lp);
+    }
+
     /** 暴露给网页：window.NativeTilt.get() 返回当前左右倾斜角（度） */
     public final class TiltBridge {
         @JavascriptInterface
@@ -56,9 +86,10 @@ public class MainActivity extends Activity implements SensorEventListener {
         w.setDecorFitsSystemWindows(false);
         WindowManager.LayoutParams lp = w.getAttributes();
         lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
-        // 向系统申请最高刷新率：游戏动画按 120Hz 渲染插值，系统默认可能把 WebView 降到 60/90Hz
-        lp.preferredRefreshRate = 120f;
         w.setAttributes(lp);
+        // 先按 120Hz 申请（游戏动画按 120Hz 渲染插值，系统默认可能把 WebView 降到 60/90Hz）；
+        // 网页加载后会按设置里的帧率再调用一次 NativeApp.setFps
+        applyRefreshRate(120f);
 
         sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         accel = sensors == null ? null : sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
@@ -102,6 +133,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         if (accel != null) {
             web.addJavascriptInterface(new TiltBridge(), "NativeTilt");
         }
+        web.addJavascriptInterface(new AppBridge(), "NativeApp");
 
         // 触屏操控模式下，按住屏幕左右边缘时不要触发系统的返回手势
         web.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
@@ -166,6 +198,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     @Override
     public void onSensorChanged(SensorEvent e) {
+        // 游戏每帧只读一次最新值，这里只做一次除法和 asin，不分配任何对象
         // 竖屏下 x 轴指向屏幕右侧：手机向右歪时重力加速度的 x 分量为负
         double s = -e.values[0] / SensorManager.GRAVITY_EARTH;
         s = Math.max(-1.0, Math.min(1.0, s));

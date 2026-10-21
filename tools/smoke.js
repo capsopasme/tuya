@@ -48,6 +48,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check(await page.evaluate(() => DJ.app.settings.hero3d === false && !DJ.hero3d.active()), '设置里能切回 2D 主角');
     await tapButton(page, 'hero');
     check(await page.evaluate(() => DJ.app.settings.hero3d === true && DJ.hero3d.active()), '再切回 3D 主角');
+    // 帧率：默认 120，切到 60 会存档并通知安卓壳
+    check(await page.evaluate(() => DJ.app.settings.fps === 120), '帧率默认 120');
+    await page.evaluate(() => {
+      window.__fps = [];
+      window.NativeApp = { setFps: (h) => window.__fps.push(h) };
+    });
+    await tapButton(page, 'fps');
+    check(
+      await page.evaluate(() => DJ.app.settings.fps === 60 && JSON.parse(localStorage.getItem('tuya.settings')).fps === 60 && window.__fps[window.__fps.length - 1] === 60),
+      '帧率切到 60 并通知安卓壳'
+    );
+    await tapButton(page, 'fps');
+    check(await page.evaluate(() => DJ.app.settings.fps === 120 && window.__fps[window.__fps.length - 1] === 120), '帧率切回 120');
+    await page.evaluate(() => delete window.NativeApp);
     await tapButton(page, 'back');
     check(await page.evaluate(() => DJ.ui.screen === 'menu'), '能从设置返回');
 
@@ -133,7 +147,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(100);
     check(await page.evaluate(() => DJ.ui.screen === 'pause'), '点右上角暂停键进入暂停');
     const yp = await page.evaluate(() => DJ.app.game.dd.y);
-    await sleep(300);
+    await sleep(500); // 等暂停界面的进场动画（约 0.45 秒）放完再比较截图
     check((await page.evaluate(() => DJ.app.game.dd.y)) === yp, '暂停期间游戏不更新');
     {
       const a = await page.screenshot();
@@ -201,6 +215,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     for (let i = 0; i < 60 && (await page.evaluate(() => DJ.app.game.dd.state)) === 'wings'; i++) await sleep(100);
     const after2 = await page.evaluate(() => ({ st: DJ.app.game.dd.state, sh: DJ.app.game.dd.shield }));
     check(after2.st === 'normal' && after2.sh > 0, '飞翼结束后回到普通状态并带护盾（' + after2.st + ', ' + after2.sh.toFixed(2) + '）');
+
+    // 紫黑飞翼：从平台上真的“捡”起来，确认进入 darkwings、身体在转、比白色飞翼涨分更快；结束后紫色护盾 + 慢落
+    const d0 = await page.evaluate(() => {
+      const g = DJ.app.game;
+      g.dd.state = 'normal';
+      g.dd.vy = 100;
+      const p = g.addPlatform('normal', g.dd.x, g.dd.y + 10);
+      p.vx = 0;
+      p.item = { type: 'dark', ox: 0, w: 38, h: 32, used: false, fired: false, t: 0 };
+      return g.score;
+    });
+    await sleep(500);
+    const dk = await page.evaluate(() => ({ st: DJ.app.game.dd.state, roll: DJ.app.game.dd.rollV }));
+    check(dk.st === 'darkwings' && Math.abs(dk.roll) > 5, '捡到紫黑飞翼，小海星旋转起来（' + dk.st + ', ' + dk.roll.toFixed(1) + ' rad/s）');
+    await page.screenshot({ path: path.join(OUT, 'darkwings.png') });
+    await sleep(900);
+    const d1 = await page.evaluate(() => DJ.app.game.score);
+    check(d1 - d0 > 700, '紫黑飞翼涨分飞快（+' + (d1 - d0) + '）');
+    for (let i = 0; i < 60 && (await page.evaluate(() => DJ.app.game.dd.state)) === 'darkwings'; i++) await sleep(100);
+    const after3 = await page.evaluate(() => ({ st: DJ.app.game.dd.state, sh: DJ.app.game.dd.shield, dark: DJ.app.game.dd.shieldDark, gl: DJ.app.game.dd.glide }));
+    check(after3.st === 'normal' && after3.sh > 0 && after3.dark && after3.gl > 0, '紫黑飞翼结束：紫色护盾 + 慢落（' + JSON.stringify(after3) + '）');
 
     // 失败结算：把角色扔到屏幕下方
     await page.evaluate(() => {

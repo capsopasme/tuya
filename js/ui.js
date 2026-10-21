@@ -7,8 +7,14 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   const UI = (DJ.ui = { screen: 'menu', t: 0, dt: 0, tIn: 1, pressed: null, buttons: [], bs: {}, meterX: 0 });
 
   const SENS_LABEL = ['低', '中', '高'];
-  const SET_Y = 0.26; // 设置页第一个按钮的位置（屏幕高度的比例）
-  const SET_ROW = 54; // 设置页按钮行距
+  // 设置页布局：第一个按钮的位置（屏幕高度的比例）和按钮行距；矮屏幕上收紧一点，五个开关加倾斜测试条也放得下
+  function setY(H) {
+    return H < 600 ? 0.21 : 0.24;
+  }
+  function setRow(H) {
+    return H < 600 ? 47 : 54;
+  }
+  const SET_N = 5; // 开关个数
 
   // 切换界面：tIn 从 0 开始计时，所有进场动画（淡入、弹出、按钮依次出现）都由它驱动。quiet=true 表示不要进场动画
   UI.go = function (name, quiet) {
@@ -67,13 +73,16 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     } else if (s === 'scores') {
       b.push(btn('back', '返回', H - 90, 140, 44));
     } else if (s === 'settings') {
-      const y0 = H * SET_Y;
-      b.push(btn('chill', '畅快模式：' + (app.settings.chill ? '开' : '关'), y0, 190, 46));
-      b.push(btn('sound', '声音：' + (app.settings.sound ? '开' : '关'), y0 + SET_ROW, 190, 46));
-      b.push(btn('sens', '灵敏度：' + SENS_LABEL[app.settings.sens], y0 + SET_ROW * 2, 190, 46));
+      const y0 = H * setY(H);
+      const R = setRow(H);
+      const bh = R < 50 ? 42 : 46;
+      b.push(btn('chill', '畅快模式：' + (app.settings.chill ? '开' : '关'), y0, 190, bh));
+      b.push(btn('sound', '声音：' + (app.settings.sound ? '开' : '关'), y0 + R, 190, bh));
+      b.push(btn('sens', '灵敏度：' + SENS_LABEL[app.settings.sens], y0 + R * 2, 190, bh));
       const has3d = DJ.hero3d.supported();
-      b.push(btn('hero', '主角：' + (app.settings.hero3d && has3d ? '3D' : '2D') + (has3d ? '' : '（不支持3D）'), y0 + SET_ROW * 3, 190, 46, { small: !has3d }));
-      b.push(btn('back', '返回', y0 + SET_ROW * 3 + 60, 140, 44));
+      b.push(btn('hero', '主角：' + (app.settings.hero3d && has3d ? '3D' : '2D') + (has3d ? '' : '（不支持3D）'), y0 + R * 3, 190, bh, { small: !has3d }));
+      b.push(btn('fps', app.settings.fps === 60 ? '帧率：60（省电）' : '帧率：120', y0 + R * 4, 190, bh, { small: app.settings.fps === 60 }));
+      b.push(btn('back', '返回', y0 + R * (SET_N - 1) + R + 4, 140, 42));
     }
     return b;
   };
@@ -261,10 +270,11 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         ctx.stroke();
       }
     } else if (s === 'settings') {
-      text(ctx, '设置', W / 2, H * SET_Y - 56, 38, INK);
-      const yb = H * SET_Y + SET_ROW * 3 + 60; // “返回”按钮顶部
-      text(ctx, '左右倾斜手机移动，点击屏幕射击', W / 2, yb + 66, 14, '#6b6b60');
-      tiltMeter(ctx, app, yb + 102);
+      const R = setRow(H);
+      text(ctx, '设置', W / 2, H * setY(H) - (R < 50 ? 42 : 52), R < 50 ? 34 : 38, INK);
+      const yb = H * setY(H) + R * SET_N + 4; // “返回”按钮顶部
+      text(ctx, '左右倾斜手机移动，点击屏幕射击', W / 2, yb + 58, 14, '#6b6b60');
+      tiltMeter(ctx, app, yb + 86);
     } else if (s === 'pause') {
       text(ctx, '已暂停', W / 2, H * 0.4 - 56, 40, INK);
     } else if (s === 'over') {

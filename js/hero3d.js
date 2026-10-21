@@ -12,15 +12,21 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   // 坐标：和 2D 一样以“单位”为准（脚底为原点，y 向下），调用方已经做好了 ctx 的平移和缩放。
 
   const H3 = (DJ.hero3d = { on: true, ok: false, failed: false, lost: false });
-  // 渲染范围（单位）：左右各留出手臂摊开 + 投影的余量，上面留出肚子被拉长时头顶手臂的高度
-  const BOX = { x: -54, y: -94, w: 108, h: 110 };
+  // 渲染范围（单位）：左右各留出手臂摊开 + 身体倾斜 + 投影的余量，上面留出肚子被拉长时头顶手臂的高度
+  const BOX = { x: -58, y: -94, w: 116, h: 112 };
+  // 省电：一个像素最多对应这么多“单位”的倒数（再高肉眼也看不出区别，片元着色器的开销却按像素数平方涨）
+  const MAX_PPU = 2.2;
+  // 省电：姿态最多每 1/60 秒重新光线步进一次；120Hz 屏幕上中间那一帧直接复用上一张图，
+  // 只把这段时间里身体转过的角度（倾斜 / 旋转）用 2D 变换补上，所以转起来照样是 120Hz 顺滑的
+  const MIN_GAP = 1 / 70;
   H3.BOX = BOX;
 
   let canvas = null;
   let gl = null;
   let prog = null;
   let U = null;
-  let lastKey = '';
+  let have = false; // 离屏画布里有没有一张能用的图
+  let lastT = -1; // 上一次真正光线步进的时间
   let cw = 0;
   let ch = 0;
 
@@ -38,7 +44,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     'uniform vec3 uBody;', // 身体中心 by，横向缩放 sxB，纵向缩放 syB
     'uniform vec2 uBelly;', // 肚皮弹簧 b2，肚子弹簧 bd
     'uniform vec2 uTip[5];', // 五条手臂的尖：头顶、左手、右手、左脚、右脚
-    'uniform float uYaw;', // 身体转向
+    'uniform vec2 uYaw;', // 身体转向（cos, sin）
+    'uniform vec4 uXf;', // 世界 -> 模型的 2x2 矩阵（身体倾斜、紫黑飞翼时的旋转）
+    'uniform vec2 uXo;', // 同上的平移
+    'uniform vec2 uBound;', // 包围球：中心 y（模型空间，x=0,z=0）、半径；离得远的光线直接跳过
     'uniform vec3 uEyeL;',
     'uniform vec3 uEyeR;',
     'uniform vec3 uEyeP;', // 眼睛半径，瞳孔偏移 x, y（相对眼睛半径）
@@ -57,7 +66,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     '  return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;',
     '}',
     'float smin(float a, float b, float k) { float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }',
-    'vec3 toModel(vec3 p) { float c = cos(uYaw); float s = sin(uYaw); return vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z); }',
+    'vec3 toModel(vec3 p) { vec2 r = mat2(uXf.xy, uXf.zw) * p.xy + uXo; float c = uYaw.x; float s = uYaw.y; return vec3(c * r.x - s * p.z, r.y, s * r.x + c * p.z); }',
     '',
     'vec2 map(vec3 p) {',
     '  vec3 q = toModel(p);',
@@ -87,22 +96,26 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     '}',
     'float calcAO(vec3 p, vec3 n) {',
     '  float occ = 0.0; float sca = 1.0;',
-    '  for (int i = 0; i < 4; i++) { float h = 0.8 + 2.4 * float(i); occ += (h - map(p + n * h).x) * sca; sca *= 0.65; }',
-    '  return clamp(1.0 - 0.075 * occ, 0.0, 1.0);',
+    '  for (int i = 0; i < 3; i++) { float h = 0.8 + 3.2 * float(i); occ += (h - map(p + n * h).x) * sca; sca *= 0.6; }',
+    '  return clamp(1.0 - 0.085 * occ, 0.0, 1.0);',
     '}',
     // 软边椭圆贴花：返回 0..1 的覆盖度
     'float blob(vec2 p, vec2 c, vec2 r) { vec2 d = (p - c) / r; return 1.0 - smoothstep(0.8, 1.05, length(d)); }',
     '',
     'void main() {',
     '  vec2 xy = vec2(uBox.x + vUv.x * uBox.z, uBox.y + (1.0 - vUv.y) * uBox.w);',
-    '  vec3 ro = vec3(xy, 40.0);',
+    // 整块渲染区域里大部分像素离身体很远（连投影都碰不到）：一次乘加就判掉，不做任何步进
+    '  vec2 mq = mat2(uXf.xy, uXf.zw) * xy + uXo;',
+    '  if (length(vec2(mq.x, mq.y - uBound.x)) > uBound.y + 14.0) { gl_FragColor = vec4(0.0); return; }',
+    '  vec3 ro = vec3(xy, 30.0);',
     '  float t = 0.0; float minD = 1e9; float mat = 0.0; bool hit = false;',
-    '  for (int i = 0; i < 72; i++) {',
+    '  float eps = uPx * 0.25;',
+    '  for (int i = 0; i < 56; i++) {',
     '    vec2 h = map(ro - vec3(0.0, 0.0, t));',
     '    minD = min(minD, h.x);',
-    '    if (h.x < 0.015) { hit = true; mat = h.y; break; }',
+    '    if (h.x < eps) { hit = true; mat = h.y; break; }',
     '    t += h.x * 0.95;',
-    '    if (t > 80.0) break;',
+    '    if (t > 60.0) break;',
     '  }',
     '  vec3 edge = vec3(0.13, 0.25, 0.09);', // 轮廓的深绿色
     '  if (!hit) {',
@@ -226,10 +239,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.useProgram(prog);
     U = {};
-    for (const n of ['uBox', 'uPx', 'uBody', 'uBelly', 'uTip', 'uYaw', 'uEyeL', 'uEyeR', 'uEyeP', 'uMouth', 'uMouthO', 'uDead']) U[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uBox', 'uPx', 'uBody', 'uBelly', 'uTip', 'uYaw', 'uXf', 'uXo', 'uBound', 'uEyeL', 'uEyeR', 'uEyeP', 'uMouth', 'uMouthO', 'uDead']) U[n] = gl.getUniformLocation(prog, n);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
-    lastKey = '';
+    have = false;
   }
 
   function init() {
@@ -284,17 +297,53 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     return zr * Math.sqrt(Math.max(0.05, 1 - u * u - w * w)) - re * 0.38;
   }
 
-  const vals = new Float32Array(40);
-  // 在已经平移缩放到“单位”坐标的 ctx 里画 3D 主角；g 是 starGeom(dd)
-  H3.draw = function (ctx, dd, g) {
+  const vals = new Float32Array(48);
+  const prev = new Float32Array(48);
+  // 上一次渲染时的“世界 -> 身体”变换（canvas 的 a,b,c,d,e,f），复用旧图时用来补上身体转过的角度
+  const M0 = [1, 0, 0, 1, 0, 0];
+  const ID = [1, 0, 0, 1, 0, 0];
+  function inv(m) {
+    const det = m[0] * m[3] - m[1] * m[2] || 1;
+    const a = m[3] / det;
+    const b = -m[1] / det;
+    const c = -m[2] / det;
+    const d = m[0] / det;
+    return [a, b, c, d, -(a * m[4] + c * m[5]), -(b * m[4] + d * m[5])];
+  }
+  function mul(m, n) {
+    return [
+      m[0] * n[0] + m[2] * n[1],
+      m[1] * n[0] + m[3] * n[1],
+      m[0] * n[2] + m[2] * n[3],
+      m[1] * n[2] + m[3] * n[3],
+      m[0] * n[4] + m[2] * n[5] + m[4],
+      m[1] * n[4] + m[3] * n[5] + m[5],
+    ];
+  }
+  // 包围球：身体中心到最远的手臂尖 + 手臂尖的半径；z 方向肚子最多鼓到 ~24 个单位
+  function boundR(g) {
+    let r = 26;
+    const tips = [g.top, g.sides[0], g.sides[1], g.legs[0], g.legs[1]];
+    for (let i = 0; i < 5; i++) r = Math.max(r, Math.hypot(tips[i][0], tips[i][1] - g.by) + 9.5);
+    // 大肚子往下鼓得最远的地方
+    r = Math.max(r, 9.5 * g.syB + Math.abs(g.b2) * 4.5 + 10 * Math.max(g.syB, 0.85) + 2, 13.2 * g.sxB * 1.25 + 2);
+    return r + 1.5;
+  }
+
+  // 在已经平移缩放到“单位”坐标的 ctx 里画 3D 主角；g 是 starGeom(dd)。
+  // lean / body 是 canvas 变换矩阵：ctx 上已经叠了 lean（整个角色一起倾斜，道具配件也跟着歪），
+  // body = lean ∘ 旋转，是身体真正的姿态 —— 交给着色器在模型空间里转，这样光照和地上的投影始终朝同一个方向
+  H3.draw = function (ctx, dd, g, lean, body) {
+    lean = lean || ID;
+    body = body || lean;
     const v = DJ.view;
-    const ppu = DJ.clamp((DJ.C.HERO || 1) * (v.scale || 1) * (v.dpr || 1), 1, 3.2);
+    const ppu = DJ.clamp((DJ.C.HERO || 1) * (v.scale || 1) * (v.dpr || 1), 1, MAX_PPU);
     const w = Math.ceil(BOX.w * ppu);
     const h = Math.ceil(BOX.h * ppu);
     if (w !== cw || h !== ch) {
       canvas.width = cw = w;
       canvas.height = ch = h;
-      lastKey = '';
+      have = false;
     }
     const dead = dd.state === 'dead';
     const look = g.look;
@@ -315,12 +364,20 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     };
     put(g.by, g.sxB, g.syB, g.b2, g.bd, yaw);
     put(g.top[0], g.top[1], g.sides[0][0], g.sides[0][1], g.sides[1][0], g.sides[1][1], g.legs[0][0], g.legs[0][1], g.legs[1][0], g.legs[1][1]);
-    put(re, px / re, py / re, 0.5, g.by + 7 * g.syB, mode, g.shootK, Math.cos(g.aim) * 1.5, Math.sin(g.aim) * 1.5, dead ? 1 : 0, w, h);
-    // 姿态完全没变（暂停、结算、菜单里两帧之间）就不必重画
-    let key = '';
-    for (let k = 0; k < i; k++) key += vals[k].toFixed(2) + ',';
-    if (key !== lastKey) {
-      lastKey = key;
+    put(re, px, py, mode, g.shootK, g.aim, dead ? 1 : 0, w, h);
+    put(body[0], body[1], body[2], body[3], body[4], body[5]);
+    // 姿态完全没变（暂停、结算、菜单里两帧之间、屏幕边缘的第二份）就不必重画
+    let same = have;
+    for (let k = 0; k < i && same; k++) if (Math.abs(vals[k] - prev[k]) > 0.004) same = false;
+    const now = DJ.clock || 0;
+    // 姿态变了，但离上次渲染还不到 1/60 秒：先复用旧图（120Hz 屏幕上每两帧才真正渲染一次）
+    const reuse = !same && have && now - lastT >= 0 && now - lastT < MIN_GAP;
+    if (!same && !reuse) {
+      prev.set(vals);
+      lastT = now;
+      have = true;
+      for (let k = 0; k < 6; k++) M0[k] = body[k];
+      const mi = inv(body);
       gl.viewport(0, 0, w, h);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -329,7 +386,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       gl.uniform3f(U.uBody, g.by, g.sxB, g.syB);
       gl.uniform2f(U.uBelly, g.b2, g.bd);
       gl.uniform2fv(U.uTip, [g.top[0], g.top[1], g.sides[0][0], g.sides[0][1], g.sides[1][0], g.sides[1][1], g.legs[0][0], g.legs[0][1], g.legs[1][0], g.legs[1][1]]);
-      gl.uniform1f(U.uYaw, yaw);
+      gl.uniform2f(U.uYaw, Math.cos(yaw), Math.sin(yaw));
+      gl.uniform4f(U.uXf, mi[0], mi[1], mi[2], mi[3]);
+      gl.uniform2f(U.uXo, mi[4], mi[5]);
+      gl.uniform2f(U.uBound, g.by, boundR(g));
       gl.uniform3f(U.uEyeL, -ex, ey, eyeZ(-ex, ey, g, re));
       gl.uniform3f(U.uEyeR, ex, ey, eyeZ(ex, ey, g, re));
       gl.uniform3f(U.uEyeP, re, px / re, py / re);
@@ -338,6 +398,11 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       gl.uniform1f(U.uDead, dead ? 1 : 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
+    // 图是在“没有倾斜”的角色坐标里渲染的：先撤掉 ctx 上的 lean；复用旧图时再补上身体从那时到现在转过的角度
+    ctx.save();
+    ctx.transform.apply(ctx, inv(lean));
+    if (reuse) ctx.transform.apply(ctx, mul(body, inv(M0)));
     ctx.drawImage(canvas, BOX.x, BOX.y, BOX.w, BOX.h);
+    ctx.restore();
   };
 })();

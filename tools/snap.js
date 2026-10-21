@@ -48,6 +48,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         g.dd.stateT = 0;
         g.dd.x = 160;
         g.dd.y = g.H - 60;
+        g.dd.lean = g.dd.leanV = g.dd.roll = g.dd.rollV = 0;
+        g.dd.leanAir = 1;
+        g.dd.glide = g.dd.glideK = g.dd.fallK = 0;
+        g.dd.shieldDark = false;
+        g.fx.length = 0;
+        g.flash = g.shake = 0;
         new Function('g', src)(g);
         g.update = function () {};
       }, fn);
@@ -119,6 +125,56 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       for (let i = 0; i < 40; i++) g.trailFx(0.04);`);
     await stage('shield', `g.fx.length = 0; g.dd.state = 'normal'; g.dd.shield = 1.2; g.dd.x = 160; g.dd.y = 330; g.dd.vy = -400; g.dd.t = 0.5;
       g.monsters.push(g.makeMonster('blob', 230, 230));`);
+
+    // 身体倾斜：落地蓄力（绕脚底压下去）、空中朝移动方向歪
+    for (const mode of ['3d', '2d']) {
+      await page.evaluate((m) => (DJ.hero3d.on = m === '3d'), mode);
+      await stage(
+        'lean-charge-' + mode,
+        `const P = g.addPlatform('normal', 160, g.H - 60); P.vx = 0;
+         g.dd.x = 160; g.dd.y = g.H - 60; g.dd.bounceT = 0.07; g.dd.belly = 0.7; g.dd.b2 = 0.8; g.dd.lean = 0.42; g.dd.leanAir = 0; g.dd.look = 0.8; g.dd.vy = -700;`
+      );
+    }
+    await page.evaluate(() => (DJ.hero3d.on = true));
+    await stage('lean-air', `g.dd.x = 160; g.dd.y = 300; g.dd.vy = -450; g.dd.vx = 300; g.dd.bounceT = 0.3; g.dd.lean = 0.2; g.dd.look = 1;`);
+    // 道具用完后的慢落：手臂摊开，身后飘着淡淡的光点
+    await stage(
+      'glide',
+      `g.dd.x = 160; g.dd.y = 300; g.dd.vy = 400; g.dd.bounceT = 1; g.dd.glide = 1.5; g.dd.glideK = 1; g.dd.fallK = 1; g.dd.armPose = -0.5; g.dd.lean = 0.12; g.dd.glideCol = 'gold';
+       for (let i = 0; i < 30; i++) { g.trailFx(0.03); g.stepWorld(0.03); g.dd.y += 12; } g.dd.y = 300;`
+    );
+    // 紫黑飞翼：平台上的道具（和白色飞翼对比）、拿到瞬间（吸 -> 炸）、飞行中旋转、结束后的紫色护盾
+    await stage(
+      'dark-item',
+      `const p = g.addPlatform('normal', 100, 240); p.vx = 0;
+       p.item = { type: 'wings', ox: 0, w: 36, h: 30, used: false, fired: false, t: 0 };
+       const q = g.addPlatform('normal', 220, 240); q.vx = 0;
+       q.item = { type: 'dark', ox: 0, w: 38, h: 32, used: false, fired: false, t: 0 };`
+    );
+    for (const [name, tt] of [['dark-pickup-a', 0.08], ['dark-pickup-b', 0.26], ['dark-pickup-c', 0.5]]) {
+      await stage(
+        name,
+        `g.dd.x = 160; g.dd.y = 360; g.itemFx('dark', 160, 360 - 24 * DJ.C.HERO); g.dd.state = 'darkwings'; g.dd.stateT = ${tt}; g.dd.vy = -1500; g.dd.t = 0.2; g.dd.roll = ${tt} * 9;
+         for (let i = 0; i < ${tt} * 120; i++) g.stepWorld(1 / 120);`
+      );
+    }
+    for (const mode of ['3d', '2d']) {
+      await page.evaluate((m) => (DJ.hero3d.on = m === '3d'), mode);
+      await stage(
+        'dark-fly-' + mode,
+        `g.dd.state = 'darkwings'; g.dd.stateT = 1.5; g.dd.x = 160; g.dd.y = 330; g.dd.vy = -1900; g.dd.t = 1.1; g.dd.look = 0.5; g.dd.spinDir = 1;
+         for (let i = 0; i < 40; i++) { g.dd.roll = (i * 0.25) % (Math.PI * 2) - Math.PI; g.trailFx(0.03); g.stepWorld(0.03); }
+         g.dd.roll = 0.9;`
+      );
+    }
+    await page.evaluate(() => (DJ.hero3d.on = true));
+    await stage('dark-shield', `g.dd.shield = 1.2; g.dd.shieldDark = true; g.dd.x = 160; g.dd.y = 330; g.dd.vy = -400; g.dd.t = 0.5;`);
+    {
+      await page.evaluate(() => { const g = DJ.app.game; g.update = g._update; g.fx.length = 0; g.platforms.length = 0; g.dd.state = 'darkwings'; g.dd.stateT = 2; g.dd.x = 160; g.dd.y = 400; g.dd.vy = -1900; g.dd.roll = 0.7; g.dd.lean = 0; g.dd.look = 0.3; g.dd.t = 2.2; g.dd.shootT = 99; g.camY = 0; g.update = function () {}; });
+      await sleep(150);
+      const pz = await page.evaluate(() => ({ x: DJ.view.ox + 80 * DJ.view.scale, y: DJ.view.oy + 310 * DJ.view.scale, w: 160 * DJ.view.scale, h: 110 * DJ.view.scale }));
+      await page.screenshot({ path: path.join(OUT, 'dark-zoom.png'), clip: { x: pz.x, y: pz.y, width: pz.w, height: pz.h } });
+    }
 
     // 2D / 3D 对比（同一套姿态）
     for (const mode of ['2d', '3d']) {

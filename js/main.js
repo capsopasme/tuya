@@ -11,7 +11,7 @@
   const app = {
     game: game,
     // 老版本存过的 control（触屏/倾斜）设置已经没有意义，直接忽略
-    settings: Object.assign({ sound: true, sens: 1, hero3d: true, chill: false }, DJ.store.get('settings', {})),
+    settings: Object.assign({ sound: true, sens: 1, hero3d: true, chill: false, fps: 120 }, DJ.store.get('settings', {})),
     scores: DJ.store.get('scores', []),
     newBest: false,
   };
@@ -20,6 +20,7 @@
   app.settings.sound = app.settings.sound !== false;
   app.settings.hero3d = app.settings.hero3d !== false;
   app.settings.chill = app.settings.chill === true;
+  if (app.settings.fps !== 60 && app.settings.fps !== 120) app.settings.fps = 120;
   if (!Array.isArray(app.scores)) app.scores = [];
   app.scores = app.scores.filter(function (s) {
     return typeof s === 'number' && isFinite(s) && s > 0;
@@ -31,6 +32,16 @@
   DJ.audio.enabled = app.settings.sound;
   I.sens = SENS[app.settings.sens];
   DJ.shownScore = 0;
+
+  // ---------- 帧率 ----------
+  // 120：跟着高刷屏走；60：省电（安卓壳里会让屏幕本身也切到 60Hz，浏览器里则每隔一帧才画一次）。
+  // 物理永远是 1/120 秒一步，两种帧率下手感完全一样
+  function applyFps() {
+    try {
+      if (window.NativeApp && window.NativeApp.setFps) window.NativeApp.setFps(app.settings.fps);
+    } catch (e) {}
+  }
+  applyFps();
 
   // ---------- 画布尺寸 ----------
   function resize() {
@@ -176,6 +187,11 @@
         app.settings.chill = !app.settings.chill; // 下一局开始生效
         save();
         break;
+      case 'fps':
+        app.settings.fps = app.settings.fps === 120 ? 60 : 120;
+        applyFps();
+        save();
+        break;
       case 'sens':
         app.settings.sens = (app.settings.sens + 1) % SENS.length;
         I.sens = SENS[app.settings.sens];
@@ -268,8 +284,19 @@
     return p.x > W - 52 && p.y < 40;
   }
 
+  // 暂停 / 排行榜这类静止界面进场动画放完以后就不再重画（省电），有触摸、按键、尺寸变化时再画一会儿
+  let dirtyUntil = 0;
+  function poke() {
+    dirtyUntil = performance.now() + 900;
+  }
+  window.addEventListener('resize', poke);
+  window.addEventListener('keydown', poke);
+  window.addEventListener('pointermove', poke);
+  window.addEventListener('pointerup', poke);
+
   canvas.addEventListener('pointerdown', function (e) {
     e.preventDefault();
+    poke();
     DJ.audio.unlock();
     requestTilt();
     const p = toLogical(e);
@@ -361,7 +388,26 @@
   window.addEventListener('focus', DJ.onResume);
 
   // ---------- 主循环 ----------
+  let lastDraw = -1e9;
+  let lastScreen = '';
   function frame(now) {
+    requestAnimationFrame(frame);
+    const s0 = UI.screen;
+    if (s0 !== lastScreen) {
+      lastScreen = s0;
+      poke();
+    }
+    // 帧率上限：游戏中按设置（60 / 120），菜单等界面最多 60 帧
+    const cap = s0 === 'play' ? app.settings.fps : 60;
+    if (now - lastDraw < 1000 / cap - 2.5) return;
+    // 静止界面：进场动画放完、也没人碰屏幕，就什么都不画（画面保持上一帧）
+    const still = (s0 === 'pause' || s0 === 'scores' || (s0 === 'over' && !app.newBest)) && UI.tIn > 1.4 && now > dirtyUntil && !UI.pressed;
+    DJ.audio.idle(s0 === 'play');
+    if (still) {
+      last = now;
+      return;
+    }
+    lastDraw = now;
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
     DJ.clock = now / 1000;
@@ -407,7 +453,6 @@
     } else {
       UI.draw(ctx, app);
     }
-    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 

@@ -52,10 +52,59 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   }
 
   // ---------- 背景：方格笔记本纸 ----------
+  // 省电：方格只在屏幕尺寸变化时画一次，做成一小块贴图（一个格子），每帧用一次 fillRect 平铺上去，
+  // 不用每帧描一百多条整屏长的线
+  let bgTile = null;
+  let bgPat = null;
+  let bgK = 0;
+  let bgCtx = null;
+  function bgPattern(ctx, v) {
+    const k = v.scale * v.dpr; // 一个单位等于多少个设备像素
+    if (bgPat && bgK === k && bgCtx === ctx) return bgPat;
+    bgPat = null;
+    if (typeof document === 'undefined' || typeof DOMMatrix === 'undefined') return null;
+    // 贴图边长取整数个设备像素，平铺时一个贴图像素正好对一个屏幕像素（不缩放、不插值，最快也最清晰）；
+    // 格子因此可能是 19.9 或 20.1 个单位，肉眼看不出来
+    const n = Math.max(4, Math.round(20 * k));
+    bgTile = bgTile || document.createElement('canvas');
+    bgTile.width = bgTile.height = n;
+    const t = bgTile.getContext('2d');
+    t.fillStyle = '#f7f4e1';
+    t.fillRect(0, 0, n, n);
+    // 和原来一样：线宽 max(1.3 设备像素, 0.5 单位)，线居中压在格子边界上（贴图的上边/左边各一半、下边/右边各一半）
+    const lw = Math.max(1.3, 0.5 * k);
+    t.fillStyle = '#c5dcd8';
+    t.fillRect(0, 0, n, lw / 2);
+    t.fillRect(0, n - lw / 2, n, lw / 2);
+    t.fillRect(0, 0, lw / 2, n);
+    t.fillRect(n - lw / 2, 0, lw / 2, n);
+    const pat = ctx.createPattern(bgTile, 'repeat');
+    if (!pat || !pat.setTransform) return null;
+    bgPat = pat;
+    bgK = k;
+    bgCtx = ctx;
+    bgPat.n = n;
+    bgPat.cell = n / k;
+    return bgPat;
+  }
   function background(ctx, camY) {
     const v = DJ.view;
     const cell = 20;
     const m = 14; // 多画一圈边距：屏幕震动时画面会偏移，不能露出底下的旧画面
+    const pat = bgPattern(ctx, v);
+    if (pat) {
+      const k = v.scale * v.dpr;
+      const c = pat.cell;
+      // 卷动偏移和画布本身的平移都对齐到整数设备像素
+      const tr = ctx.getTransform();
+      const offY = ((camY % c) + c) % c;
+      const ex = (Math.round(tr.e) - tr.e) / k;
+      const ey = (Math.round(tr.f - offY * k) - (tr.f - offY * k)) / k - offY;
+      pat.setTransform(new DOMMatrix([1 / k, 0, 0, 1 / k, ex, ey]));
+      ctx.fillStyle = pat;
+      ctx.fillRect(v.x0 - m, v.y0 - m, v.x1 - v.x0 + 2 * m, v.y1 - v.y0 + 2 * m);
+      return;
+    }
     ctx.fillStyle = '#f7f4e1';
     ctx.fillRect(v.x0 - m, v.y0 - m, v.x1 - v.x0 + 2 * m, v.y1 - v.y0 + 2 * m);
     ctx.beginPath();
@@ -104,17 +153,32 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     white: { top: '#ffffff', bot: '#d9d9d2', line: '#8e8e86', hi: 'rgba(255,255,255,0.8)' },
   };
 
+  // 省电：平台渐变按“平台自己的坐标”建一次缓存起来，画的时候平移过去，不用每块平台每帧新建一个渐变对象
+  const platGrad = {};
+  let platGradCtx = null;
+  function platGradient(ctx, type, h) {
+    if (platGradCtx !== ctx) {
+      for (const k in platGrad) delete platGrad[k];
+      platGradCtx = ctx;
+    }
+    let g = platGrad[type];
+    if (!g) {
+      g = platGrad[type] = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, PAL[type].top);
+      g.addColorStop(1, PAL[type].bot);
+    }
+    return g;
+  }
+
   function platformBody(ctx, p) {
-    const x = p.x - p.w / 2;
-    const y = p.y;
     const pal = PAL[p.type];
     ctx.save();
     if (p.dead) ctx.globalAlpha = Math.max(0, 1 - p.fade / 0.22);
-    const g = ctx.createLinearGradient(0, y, 0, y + p.h);
-    g.addColorStop(0, pal.top);
-    g.addColorStop(1, pal.bot);
+    ctx.translate(p.x - p.w / 2, p.y);
+    const x = 0;
+    const y = 0;
     rr(ctx, x, y, p.w, p.h, 5.5);
-    ctx.fillStyle = g;
+    ctx.fillStyle = platGradient(ctx, p.type, p.h);
     ctx.fill();
     ctx.lineWidth = 1.8;
     ctx.strokeStyle = pal.line;
@@ -244,7 +308,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         ctx.translate(s * 3, 2);
         ctx.scale(s * 0.4, 0.4);
         ctx.rotate(-0.25 - flap);
-        wingShape(ctx);
+        wingShape(ctx, false, t);
         ctx.restore();
       }
       // 中间一颗小宝石把两只翅膀连起来
@@ -260,6 +324,64 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         const k = 0.5 + 0.5 * Math.sin(t * 7 + i * 2);
         star(ctx, Math.cos(a) * 24, Math.sin(a) * 12 - 2, 2 + 2.2 * k);
         ctx.fillStyle = 'rgba(255,240,160,' + (0.5 + 0.5 * k).toFixed(3) + ')';
+        ctx.fill();
+      }
+    } else if (it.type === 'dark') {
+      // 紫黑飞翼：悬得更高，暗紫色光晕里有一圈慢慢转的符文虚线环，几颗紫色小火星绕着它转
+      const t = performance_now();
+      const bob = Math.sin(t * 2.6 + p.x * 0.05) * 2.4;
+      ctx.translate(x, y - 16 + bob);
+      const pulse = 0.7 + 0.3 * Math.sin(t * 4);
+      const gr = ctx.createRadialGradient(0, 0, 2, 0, 0, 34);
+      gr.addColorStop(0, 'rgba(170,90,255,' + (0.8 * pulse).toFixed(3) + ')');
+      gr.addColorStop(0.55, 'rgba(110,40,200,' + (0.35 * pulse).toFixed(3) + ')');
+      gr.addColorStop(1, 'rgba(80,20,160,0)');
+      ctx.fillStyle = gr;
+      ctx.beginPath();
+      ctx.arc(0, 0, 34, 0, TAU);
+      ctx.fill();
+      ctx.save();
+      ctx.rotate(t * 0.9);
+      ctx.beginPath();
+      ctx.arc(0, 0, 24, 0, TAU);
+      ctx.setLineDash([2.5, 4.5]);
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = 'rgba(215,180,255,0.85)';
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      const flap = Math.sin(t * 7) * 0.32;
+      for (const s of [-1, 1]) {
+        ctx.save();
+        ctx.translate(s * 3, 2);
+        ctx.scale(s * 0.42, 0.42);
+        ctx.rotate(-0.25 - flap);
+        wingShape(ctx, true, t);
+        ctx.restore();
+      }
+      // 中间一颗黑紫色的宝石，边上一圈霓虹描边
+      ctx.beginPath();
+      ctx.moveTo(0, -6);
+      ctx.lineTo(5, 1);
+      ctx.lineTo(0, 8);
+      ctx.lineTo(-5, 1);
+      ctx.closePath();
+      ctx.fillStyle = '#2a0f45';
+      ctx.fill();
+      ctx.lineWidth = 1.7;
+      ctx.strokeStyle = '#e2c6ff';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-1.5, -2.5);
+      ctx.lineTo(1.5, 0);
+      ctx.lineWidth = 1.3;
+      ctx.strokeStyle = 'rgba(140,240,255,0.9)';
+      ctx.stroke();
+      for (let i = 0; i < 4; i++) {
+        const a = -t * 2.1 + (i * TAU) / 4;
+        const k = 0.5 + 0.5 * Math.sin(t * 8 + i * 1.7);
+        star(ctx, Math.cos(a) * 27, Math.sin(a) * 13 - 2, 1.8 + 2 * k);
+        ctx.fillStyle = i % 2 ? 'rgba(255,130,240,' + (0.55 + 0.45 * k).toFixed(3) + ')' : 'rgba(225,200,255,' + (0.55 + 0.45 * k).toFixed(3) + ')';
         ctx.fill();
       }
     } else if (it.type === 'jet') {
@@ -295,27 +417,61 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     [0.05, 38],
     [0.3, 29],
   ];
-  function wingShape(ctx) {
+  // dark=true 是紫黑飞翼：飞羽更长更尖、黑紫色，每根羽毛内侧有一圈霓虹紫的描边，
+  // 还有一道随时间在羽毛上来回流动的虹彩光泽
+  function wingShape(ctx, dark, t) {
     ctx.lineJoin = 'round';
     for (let i = 0; i < FEATHERS.length; i++) {
       const a = FEATHERS[i][0];
-      const L = FEATHERS[i][1];
-      const g = ctx.createLinearGradient(0, 0, Math.cos(a) * L, Math.sin(a) * L);
-      g.addColorStop(0, '#ffffff');
-      g.addColorStop(0.6, '#fffbe8');
-      g.addColorStop(1, '#ffd96a');
+      const L = FEATHERS[i][1] * (dark ? 1.1 : 1);
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const g = ctx.createLinearGradient(0, 0, ca * L, sa * L);
+      const rw = dark ? 5.9 : 6.8;
+      if (dark) {
+        const sh = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin((t || 0) * 3.2 - i * 0.8));
+        g.addColorStop(0, '#160a24');
+        g.addColorStop(Math.max(0.01, sh - 0.18), '#2e1350');
+        g.addColorStop(sh, '#b98aff');
+        g.addColorStop(Math.min(0.99, sh + 0.18), '#4a1f86');
+        g.addColorStop(1, '#8f4dff');
+      } else {
+        g.addColorStop(0, '#ffffff');
+        g.addColorStop(0.6, '#fffbe8');
+        g.addColorStop(1, '#ffd96a');
+      }
       ctx.beginPath();
-      ctx.ellipse(Math.cos(a) * L * 0.52, Math.sin(a) * L * 0.52, L * 0.52, 6.8, a, 0, TAU);
-      fillStroke(ctx, g, 1.8);
+      ctx.ellipse(ca * L * 0.52, sa * L * 0.52, L * 0.52, rw, a, 0, TAU);
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.lineWidth = 1.8;
+      ctx.strokeStyle = dark ? '#09040f' : INK;
+      ctx.stroke();
+      if (dark) {
+        ctx.beginPath();
+        ctx.ellipse(ca * L * 0.54, sa * L * 0.54, L * 0.44, rw * 0.55, a, 0, TAU);
+        ctx.lineWidth = 0.9;
+        ctx.strokeStyle = 'rgba(206,160,255,0.75)';
+        ctx.stroke();
+      }
     }
     ctx.beginPath();
     ctx.ellipse(13, -6, 17, 11, -0.35, 0, TAU);
-    fillStroke(ctx, '#ffffff', 1.8);
+    fillStroke(ctx, dark ? '#1f0c33' : '#ffffff', 1.8);
+    if (dark) {
+      ctx.strokeStyle = '#09040f';
+      ctx.stroke();
+      // 覆羽上的一颗小宝石反光
+      ctx.beginPath();
+      ctx.ellipse(16, -8, 3.4, 2, -0.35, 0, TAU);
+      ctx.fillStyle = 'rgba(150,240,255,0.85)';
+      ctx.fill();
+    }
     ctx.beginPath();
     ctx.moveTo(5, -4);
     ctx.quadraticCurveTo(14, -12, 25, -11);
     ctx.lineWidth = 1.4;
-    ctx.strokeStyle = 'rgba(230,180,60,0.8)';
+    ctx.strokeStyle = dark ? 'rgba(200,140,255,0.95)' : 'rgba(230,180,60,0.8)';
     ctx.stroke();
   }
 
@@ -420,12 +576,47 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     ctx.ellipse(0, g.by, DISC * g.sxB + extra, DISC * g.syB + extra, 0, 0, TAU);
   }
 
+  // ---------- 身体倾斜 / 旋转 ----------
+  // canvas 变换矩阵 [a, b, c, d, e, f]：x' = a x + c y + e，y' = b x + d y + f
+  const ID = [1, 0, 0, 1, 0, 0];
+  function rotAbout(a, px, py) {
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    return [c, s, -s, c, px - c * px + s * py, py - s * px - c * py];
+  }
+  function mul(m, n) {
+    return [
+      m[0] * n[0] + m[2] * n[1],
+      m[1] * n[0] + m[3] * n[1],
+      m[0] * n[2] + m[2] * n[3],
+      m[1] * n[2] + m[3] * n[3],
+      m[0] * n[4] + m[2] * n[5] + m[4],
+      m[1] * n[4] + m[3] * n[5] + m[5],
+    ];
+  }
+  // lean：整个角色（连同翅膀、喷气背包）一起朝移动方向倾斜。踩在平台上蓄力时绕脚底转，腾空后绕身体中心转（leanAir 平滑过渡）
+  // spin：紫黑飞翼时只有身体绕中心旋转，翅膀保持张开朝上
+  function heroXf(dd, g) {
+    const lean = dd.lean || 0;
+    const roll = dd.roll || 0;
+    const air = dd.leanAir === undefined ? 1 : dd.leanAir;
+    // 踩在平台上时转轴是“前脚”（往哪边歪就以哪只脚为支点，另一只脚抬起来），不会把脚压进平台里
+    const footX = g.legs[1][0] * clamp(lean / 0.2, -1, 1) * (1 - air);
+    const lm = Math.abs(lean) > 1e-4 ? rotAbout(lean, footX, lerp(FOOT_Y, g.by, air)) : ID;
+    const sm = Math.abs(roll) > 1e-4 ? rotAbout(roll, 0, g.by) : ID;
+    return { lean: lm, spin: sm, body: sm === ID ? lm : mul(lm, sm) };
+  }
+  DJ.heroXf = heroXf;
+
   // 残影：只画一层半透明的绿色剪影（一次 fill，不会因为部位重叠而叠深）
   function starGhost(ctx, d, x, y, alpha, col) {
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(HS, HS);
-    starPath(ctx, starGeom(d), 1.5);
+    const g = starGeom(d);
+    const xf = heroXf(d, g);
+    if (xf.body !== ID) ctx.transform.apply(ctx, xf.body);
+    starPath(ctx, g, 1.5);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = col || '#b6f783';
     ctx.fill();
@@ -434,30 +625,95 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   DJ.drawStarGhost = starGhost;
 
   // 飞翼：两只大翅膀长在背后（画在身体后面），飞行时快速扇动，快结束时越扇越慢
-  function heroWings(ctx, dd, g) {
-    const T = DJ.C.WING_T;
+  function heroWings(ctx, dd, g, dark) {
+    const T = dark ? DJ.C.DARK_T : DJ.C.WING_T;
     const left = T - (dd.stateT || 0);
-    const speed = left < 1 ? lerp(7, 15, clamp(left, 0, 1)) : 15;
-    const flap = Math.sin((dd.t || 0) * speed) * 0.55;
+    const top = dark ? 19 : 15;
+    const speed = left < 1 ? lerp(7, top, clamp(left, 0, 1)) : top;
+    const flap = Math.sin((dd.t || 0) * speed) * (dark ? 0.5 : 0.55);
     const open = clamp((dd.stateT || 0) / 0.18, 0, 1); // 拿到的一瞬间翅膀“唰”地张开
-    // 背后的金色光晕
-    const r = 58 * (0.6 + 0.4 * open);
+    const t = dd.t || 0;
+    // 背后的光晕：白色飞翼是金色的；紫黑飞翼是深紫色，外面还有两圈反向转动的符文环
+    const r = (dark ? 66 : 58) * (0.6 + 0.4 * open);
     const gr = ctx.createRadialGradient(0, g.by, 4, 0, g.by, r);
-    gr.addColorStop(0, 'rgba(255,236,150,0.55)');
-    gr.addColorStop(1, 'rgba(255,236,150,0)');
+    if (dark) {
+      gr.addColorStop(0, 'rgba(190,120,255,0.6)');
+      gr.addColorStop(0.45, 'rgba(110,40,210,0.32)');
+      gr.addColorStop(1, 'rgba(60,10,120,0)');
+    } else {
+      gr.addColorStop(0, 'rgba(255,236,150,0.55)');
+      gr.addColorStop(1, 'rgba(255,236,150,0)');
+    }
     ctx.fillStyle = gr;
     ctx.beginPath();
     ctx.arc(0, g.by, r, 0, TAU);
     ctx.fill();
+    if (dark) {
+      ctx.save();
+      ctx.translate(0, g.by);
+      ctx.globalAlpha = open;
+      ctx.lineCap = 'round';
+      ctx.rotate(-t * 1.6);
+      ctx.beginPath();
+      ctx.arc(0, 0, 44, 0, TAU);
+      ctx.setLineDash([5, 7]);
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = 'rgba(200,150,255,0.7)';
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // 外圈：12 道刻度
+      ctx.rotate(t * 2.8);
+      ctx.beginPath();
+      for (let i = 0; i < 12; i++) {
+        const a = (i * TAU) / 12;
+        ctx.moveTo(Math.cos(a) * 49, Math.sin(a) * 49);
+        ctx.lineTo(Math.cos(a) * (i % 3 === 0 ? 56 : 52), Math.sin(a) * (i % 3 === 0 ? 56 : 52));
+      }
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,120,235,0.55)';
+      ctx.stroke();
+      ctx.restore();
+    }
     for (const s of [-1, 1]) {
       ctx.save();
       ctx.translate(s * 6 * g.sxB, g.by - 4 * g.syB);
-      const ws = 1.3 * (0.35 + 0.65 * open); // 翅膀比身体还大，一眼就看得出是终极道具
+      const ws = (dark ? 1.36 : 1.3) * (0.35 + 0.65 * open); // 翅膀比身体还大，一眼就看得出是终极道具
       ctx.scale(s * ws, ws);
       ctx.rotate(-0.12 - flap);
-      wingShape(ctx);
+      wingShape(ctx, dark, t + s * 0.4);
       ctx.restore();
     }
+  }
+
+  // 紫黑飞翼：三颗拖着尾巴的小彗星绕着旋转的小海星转（画在身体前面，椭圆轨道后半圈压暗，像真的绕到了背后）
+  function heroDarkFront(ctx, dd, g) {
+    const t = dd.t || 0;
+    const open = clamp((dd.stateT || 0) / 0.25, 0, 1);
+    ctx.save();
+    ctx.translate(0, g.by);
+    ctx.rotate(-0.35);
+    ctx.lineCap = 'round';
+    const cols = ['199,125,255', '255,110,235', '125,240,255'];
+    for (let i = 0; i < 3; i++) {
+      const a0 = t * 6.5 + (i * TAU) / 3;
+      const depth = Math.sin(a0); // >0 在前面
+      const k = open * (0.35 + 0.65 * (0.5 + 0.5 * depth));
+      ctx.beginPath();
+      for (let j = 0; j <= 8; j++) {
+        const a = a0 - j * 0.11;
+        const px = Math.cos(a) * 40;
+        const py = Math.sin(a) * 13;
+        if (j === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.lineWidth = 2.6 * k;
+      ctx.strokeStyle = 'rgba(' + cols[i] + ',' + (0.6 * k).toFixed(3) + ')';
+      ctx.stroke();
+      star(ctx, Math.cos(a0) * 40, Math.sin(a0) * 13, 2.2 + 2.6 * k);
+      ctx.fillStyle = 'rgba(255,255,255,' + k.toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // 飞翼结束后的护盾：一圈闪烁的金色光环，快结束时闪得更快
@@ -468,15 +724,16 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const r = 36 + Math.sin(t * 8) * 1.5;
     ctx.save();
     ctx.globalAlpha = fade * blink;
+    const dark = dd.shieldDark;
     const gr = ctx.createRadialGradient(0, g.by, r * 0.55, 0, g.by, r);
-    gr.addColorStop(0, 'rgba(255,236,150,0)');
-    gr.addColorStop(1, 'rgba(255,226,120,0.45)');
+    gr.addColorStop(0, dark ? 'rgba(170,90,255,0)' : 'rgba(255,236,150,0)');
+    gr.addColorStop(1, dark ? 'rgba(160,80,255,0.45)' : 'rgba(255,226,120,0.45)');
     ctx.fillStyle = gr;
     ctx.beginPath();
     ctx.arc(0, g.by, r, 0, TAU);
     ctx.fill();
     ctx.lineWidth = 2.4;
-    ctx.strokeStyle = 'rgba(240,190,50,0.9)';
+    ctx.strokeStyle = dark ? 'rgba(190,130,255,0.95)' : 'rgba(240,190,50,0.9)';
     ctx.setLineDash([7, 5]);
     ctx.lineDashOffset = -t * 30;
     ctx.stroke();
@@ -623,15 +880,24 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const by = g.by;
     const topY = g.top[1] - ARM_TIP - OUT_W; // 头顶最高点（含描边）
 
-    if (st === 'wings') heroWings(ctx, dd, g);
+    const xf = heroXf(dd, g);
+    if (xf.lean !== ID) ctx.transform.apply(ctx, xf.lean);
+
+    if (st === 'wings' || st === 'darkwings') heroWings(ctx, dd, g, st === 'darkwings');
     if (dd.shield > 0 && st === 'normal') heroShield(ctx, dd, g);
 
     // 3D 模式：身体和脸由 WebGL 光线步进渲染（真的有体积、光照和晃动的大肚子），道具配件仍用 2D 画在上面
     if (DJ.hero3d && DJ.hero3d.active()) {
-      DJ.hero3d.draw(ctx, dd, g);
+      DJ.hero3d.draw(ctx, dd, g, xf.lean, xf.body);
+    } else if (xf.spin !== ID) {
+      ctx.save();
+      ctx.transform.apply(ctx, xf.spin);
+      body2d(ctx, dd, g);
+      ctx.restore();
     } else {
       body2d(ctx, dd, g);
     }
+    if (st === 'darkwings') heroDarkFront(ctx, dd, g);
 
     // 喷气背包：两个油罐绑在肚子两侧（画在身体前面，不然会被胖手臂挡住），火焰朝下喷
     if (st === 'jetpack') {
@@ -705,7 +971,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     doodlerAt(ctx, dd, x, y);
     if (dd.state !== 'blackhole' && dd.state !== 'abducted') {
       // 走到屏幕边缘时另一侧也画一份（飞翼张开时翅膀很宽，边距跟着放大）
-      const edge = (dd.state === 'wings' ? 80 : 46) * HS;
+      const edge = (dd.state === 'wings' || dd.state === 'darkwings' ? 84 : 52) * HS;
       if (x < edge) doodlerAt(ctx, dd, x + W, y);
       else if (x > W - edge) doodlerAt(ctx, dd, x - W, y);
     }
@@ -1025,14 +1291,40 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
         ctx.rotate(f.rot);
         ctx.beginPath();
         ctx.ellipse(0, 0, f.r * 1.9, f.r * 0.75, 0, 0, TAU);
-        fillStroke(ctx, '#fffdf2', 1.2);
+        if (f.dark) {
+          // 黑紫色羽毛，边缘一圈淡淡的霓虹紫
+          ctx.fillStyle = '#2a1242';
+          ctx.fill();
+          ctx.lineWidth = 1.2;
+          ctx.strokeStyle = 'rgba(200,150,255,0.85)';
+          ctx.stroke();
+        } else fillStroke(ctx, '#fffdf2', 1.2);
         ctx.beginPath();
         ctx.moveTo(-f.r * 2.4, 0);
         ctx.lineTo(f.r * 1.5, 0);
         ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(200,160,60,0.9)';
+        ctx.strokeStyle = f.dark ? 'rgba(130,240,255,0.8)' : 'rgba(200,160,60,0.9)';
         ctx.stroke();
         ctx.restore();
+      } else if (f.k === 'spiral') {
+        // 漩涡：几条螺旋臂一边转一边往外甩开，越来越细、越来越淡
+        const e = 1 - Math.pow(1 - Math.min(1, u * 1.5), 3);
+        const R = f.R * (0.2 + 0.8 * e);
+        ctx.globalAlpha = Math.min(1, al * 1.3);
+        ctx.lineCap = 'round';
+        ctx.lineWidth = f.w * (0.3 + 0.7 * al);
+        ctx.strokeStyle = 'rgb(' + f.col + ')';
+        for (let j = 0; j < f.n; j++) {
+          ctx.beginPath();
+          for (let k = 2; k <= 14; k++) {
+            const q = k / 14;
+            const a = f.a0 + (j * TAU) / f.n + u * f.spin + q * 2.4;
+            const r = R * q;
+            if (k === 2) ctx.moveTo(f.x + Math.cos(a) * r, f.y + Math.sin(a) * r * f.flat);
+            else ctx.lineTo(f.x + Math.cos(a) * r, f.y + Math.sin(a) * r * f.flat);
+          }
+          ctx.stroke();
+        }
       } else if (f.k === 'rays') {
         // 放射线：从中心往外“嗖”地射出去，射线先变长、后脱离中心
         const e = 1 - Math.pow(1 - Math.min(1, u * 1.7), 2);
@@ -1113,16 +1405,17 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   function speedLines(ctx, dd, x, y) {
     const k = clamp((-dd.vy - 650) / 450, 0, 1);
     if (k <= 0 || dd.state === 'dead') return;
-    const wings = dd.state === 'wings'; // 飞翼时速度线更多、更宽、更长，还带一点金色
-    const t = (DJ.clock || 0) * (wings ? 1600 : 1100);
-    const n = wings ? 11 : 7;
+    const dark = dd.state === 'darkwings';
+    const wings = dark || dd.state === 'wings'; // 飞翼时速度线更多、更宽、更长，还带一点金色（紫黑飞翼是紫色）
+    const t = (DJ.clock || 0) * (dark ? 2100 : wings ? 1600 : 1100);
+    const n = dark ? 13 : wings ? 11 : 7;
     const span = wings ? 12 : 13 * HS;
-    const col = wings ? '200,150,40,' : '70,110,110,';
+    const col = dark ? '140,70,230,' : wings ? '200,150,40,' : '70,110,110,';
     ctx.lineCap = 'round';
     ctx.lineWidth = 2;
     for (let i = 0; i < n; i++) {
       const lx = x + (i - (n - 1) / 2) * span + Math.sin(i * 12.9) * 4;
-      const len = (wings ? 40 : 26) + ((i * 37) % 22);
+      const len = (dark ? 52 : wings ? 40 : 26) + ((i * 37) % 22);
       const off = (t + i * 53) % 70;
       ctx.beginPath();
       ctx.moveTo(lx, y + 4 + off);
