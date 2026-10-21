@@ -45,6 +45,10 @@
   applyFps();
 
   // ---------- 画布尺寸 ----------
+  // 渲染分辨率档位（乘在屏幕像素密度上）：跟不上目标帧率时自动往下降一档，见下面的 adapt()。
+  // 每次启动先从上次稳定的那一档再往上试一档，免得一次发热降下来以后永远回不去
+  const RES = [1, 0.85, 0.72, 0.6];
+  let resLevel = Math.max(0, Math.min(RES.length - 1, (DJ.store.get('resLevel', 0) | 0) - 1));
   function resize() {
     const vv = window.visualViewport;
     const vw = Math.max(1, Math.round(vv ? vv.width : window.innerWidth));
@@ -52,7 +56,7 @@
     const aspect = vh / vw;
     const H = aspect >= 1.5 ? Math.min(DJ.MAX_H, Math.round(W * aspect)) : DJ.MIN_H;
     const scale = Math.min(vw / W, vh / H);
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3) * RES[resLevel];
     canvas.width = Math.round(vw * dpr);
     canvas.height = Math.round(vh * dpr);
     canvas.style.width = vw + 'px';
@@ -270,15 +274,20 @@
     }
   }
   if (!(window.DeviceMotionEvent && typeof window.DeviceMotionEvent.requestPermission === 'function')) listenSensors();
-  DJ.pollNativeTilt = function () {
+  // 原生桥每次调用都要同步跨线程等 Java 返回；传感器本身 50Hz（20ms 一次），每帧都问是白白等待，最多 12ms 问一次
+  let lastPoll = -1e9;
+  DJ.pollNativeTilt = function (force) {
     if (!NATIVE) return;
+    const t = performance.now();
+    if (!force && t - lastPoll < 12) return;
+    lastPoll = t;
     try {
       I.setRaw(window.NativeTilt.get());
     } catch (e) {}
   };
   // 切回应用 / 窗口重新获得焦点：对齐传感器、丢掉旧时间，避免第一帧一个大 dt 或沿用旧姿势
   DJ.onResume = function () {
-    DJ.pollNativeTilt();
+    DJ.pollNativeTilt(true);
     I.snapTilt();
     syncClock();
   };
@@ -395,16 +404,19 @@
   // ---------- 性能信息（设置里打开后显示在分数栏下面）----------
   // rAF：浏览器每秒回调多少次 = WebView 实际跟着屏幕刷新的频率；画：每秒真正画了多少帧；
   // 卡顿：最近 2 秒里两帧间隔超过正常间隔 1.5 倍的次数；JS：每帧脚本耗时（不含 GPU）
-  const perf = (DJ.perf = { text: '', raf: [], draws: [], gaps: [], js: 0, lastRaf: 0, t: 0 });
+  const perf = (DJ.perf = { on: false, text: '', raf: [], draws: [], gaps: [], js: 0, h3: 0, h3avg: 0, t: 0 });
   function perfTick(now, drew, jsMs) {
-    if (!app.settings.perf) return;
+    perf.on = app.settings.perf;
+    if (!perf.on) return;
     perf.raf.push(now);
     while (perf.raf.length && perf.raf[0] < now - 1000) perf.raf.shift();
     if (drew) {
       if (perf.draws.length) perf.gaps.push([now, now - perf.draws[perf.draws.length - 1]]);
       perf.draws.push(now);
       perf.js += (jsMs - perf.js) * 0.1;
+      perf.h3avg += (perf.h3 - perf.h3avg) * 0.1;
     }
+    perf.h3 = 0;
     while (perf.draws.length && perf.draws[0] < now - 1000) perf.draws.shift();
     while (perf.gaps.length && perf.gaps[0][0] < now - 2000) perf.gaps.shift();
     if (now - perf.t < 250) return;
@@ -414,10 +426,65 @@
       if (window.NativeApp && window.NativeApp.getHz) hz = Math.round(window.NativeApp.getHz());
     } catch (e) {}
     const rafN = perf.raf.length;
-    const expect = 1000 / Math.min(app.settings.fps, Math.max(30, rafN));
+    // 卡顿：相对目标帧率（不是相对当前 rAF）——120 档时两帧间隔超过 12.5ms，就是错过了至少一次屏幕刷新
+    const expect = 1000 / app.settings.fps;
     let jank = 0;
     for (let i = 0; i < perf.gaps.length; i++) if (perf.gaps[i][1] > expect * 1.5) jank++;
-    perf.text = (hz ? '屏幕 ' + hz + 'Hz · ' : '') + 'rAF ' + rafN + ' · 画 ' + perf.draws.length + ' 帧 · 卡顿 ' + jank + ' · JS ' + perf.js.toFixed(1) + 'ms';
+    perf.text =
+      (hz ? '屏幕 ' + hz + 'Hz · ' : '') + 'rAF ' + rafN + ' · 画 ' + perf.draws.length + ' 帧 · 卡顿 ' + jank + '/2秒' +
+      '\nJS ' + perf.js.toFixed(1) + 'ms（3D ' + perf.h3avg.toFixed(1) + '）· 画质 ' + Math.round(RES[resLevel] * 100) + '%';
+  }
+
+  // ---------- 自动画质 ----------
+  // 每 2 秒统计一次实际帧数；明显达不到目标帧率（< 92%）就把渲染分辨率降一档。降完再看 2 秒：
+  // 帧率没有明显变好（说明瓶颈不在像素多少），就退回原来的分辨率、这次运行不再尝试，免得白白变糊。
+  // 只在安卓壳里启用（能拿到屏幕真实刷新率，排除“屏幕本身就只有 60Hz”的情况）
+  const ad = { t0: 0, n: 0, testing: false, before: 0, locked: false };
+  function adaptReset() {
+    ad.t0 = 0;
+  }
+  function applyRes() {
+    resize();
+    adaptReset();
+  }
+  DJ.resInfo = function () {
+    return { level: resLevel, locked: ad.locked, testing: ad.testing };
+  };
+  function adapt(now) {
+    if (!window.NativeApp || !window.NativeApp.getHz) return;
+    if (!ad.t0) {
+      ad.t0 = now;
+      ad.n = 0;
+      return;
+    }
+    ad.n++;
+    const span = now - ad.t0;
+    if (span < 2000) return;
+    const target = app.settings.fps;
+    const ratio = (ad.n * 1000) / span / target;
+    ad.t0 = now;
+    ad.n = 0;
+    let hz = 0;
+    try {
+      hz = window.NativeApp.getHz();
+    } catch (e) {}
+    if (hz && hz < target - 5) return; // 屏幕本身就跑不到目标帧率，降分辨率没用
+    if (ad.testing) {
+      ad.testing = false;
+      if (ratio < ad.before + 0.04) {
+        resLevel--;
+        ad.locked = true;
+        applyRes();
+        return;
+      }
+      DJ.store.set('resLevel', resLevel);
+    }
+    if (!ad.locked && ratio < 0.92 && resLevel < RES.length - 1) {
+      ad.before = ratio;
+      ad.testing = true;
+      resLevel++;
+      applyRes();
+    } else if (ratio >= 0.97) DJ.store.set('resLevel', resLevel);
   }
 
   // ---------- 主循环 ----------
@@ -453,6 +520,8 @@
     UI.tick(dt);
     DJ.pollNativeTilt();
 
+    if (UI.screen === 'play') adapt(now);
+    else adaptReset();
     if (UI.screen === 'play') {
       const input = { axis: I.axis(dt), shots: I.shots };
       acc += dt;

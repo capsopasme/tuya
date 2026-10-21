@@ -77,7 +77,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(400);
     {
       const pt = await page.evaluate(() => DJ.perf.text);
-      check(/rAF \d+ · 画 \d+ 帧/.test(pt), '性能信息在游戏中有数字（' + pt + '）');
+      check(/rAF \d+ · 画 \d+ 帧 · 卡顿 \d+\/2秒\nJS [\d.]+ms（3D [\d.]+）· 画质 \d+%/.test(pt), '性能信息在游戏中有数字（' + pt + '）');
     }
     // 在起始平台那一排铺满平台当安全网：下面要左右猛倾斜，别让角色走出平台摔死导致后面的测试误报
     await page.evaluate(() => {
@@ -327,6 +327,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         await native.page.evaluate(() => (window.__t = -20));
         await sleep(350);
         check((await native.page.evaluate(() => DJ.app.game.dd.vx)) < -100, '原生倾斜桥向左 20° → 角色向左加速');
+        // 自动画质：无头浏览器只有 60 帧，假装屏幕是 120Hz —— 帧数达不到会先降一档分辨率；
+        // 降了也没变快（瓶颈不在像素），2 秒后应该自动退回原分辨率并锁住不再尝试
+        await native.page.evaluate(() => {
+          window.NativeApp = { getHz: () => 120, setFps: () => {} };
+        });
+        let sawDrop = false;
+        for (let i = 0; i < 30; i++) {
+          const r = await native.page.evaluate(() => {
+            const g = DJ.app.game;
+            g.dd.y = g.camY + g.H * 0.5; // 别让角色掉下去结束游戏
+            g.dd.vy = -300;
+            return DJ.resInfo();
+          });
+          if (r.level > 0) sawDrop = true;
+          if (sawDrop && r.locked) break;
+          await sleep(250);
+        }
+        const ri = await native.page.evaluate(() => DJ.resInfo());
+        check(sawDrop && ri.level === 0 && ri.locked, '自动画质：降分辨率没用时会退回原画质（' + JSON.stringify(ri) + '）');
         check(native.errors.length === 0, '原生桥场景没有脚本报错' + (native.errors.length ? '：' + native.errors.join(' | ') : ''));
       } finally {
         await native.browser.close();

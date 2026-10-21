@@ -153,28 +153,64 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     white: { top: '#ffffff', bot: '#d9d9d2', line: '#8e8e86', hi: 'rgba(255,255,255,0.8)' },
   };
 
-  // 省电：平台渐变按“平台自己的坐标”建一次缓存起来，画的时候平移过去，不用每块平台每帧新建一个渐变对象
-  const platGrad = {};
-  let platGradCtx = null;
   function platGradient(ctx, type, h) {
-    if (platGradCtx !== ctx) {
-      for (const k in platGrad) delete platGrad[k];
-      platGradCtx = ctx;
-    }
-    let g = platGrad[type];
-    if (!g) {
-      g = platGrad[type] = ctx.createLinearGradient(0, 0, 0, h);
-      g.addColorStop(0, PAL[type].top);
-      g.addColorStop(1, PAL[type].bot);
-    }
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, PAL[type].top);
+    g.addColorStop(1, PAL[type].bot);
     return g;
   }
 
+  // ---------- 贴图缓存 ----------
+  // 不会变形的东西（平台、静止的道具）只在第一次用到时按屏幕像素密度画进一张小画布，之后每帧一次 drawImage 贴上去。
+  // 矢量路径（圆角、描边、渐变）每帧都要重新细分三角形、光栅化，贴图只是一个带纹理的矩形，GPU 上便宜得多
+  const sprites = {};
+  let spriteK = 0;
+  function sprite(key, x0, y0, w, h, draw) {
+    const v = DJ.view;
+    const k = v.scale * v.dpr;
+    if (Math.abs(k - spriteK) > 1e-6) {
+      for (const kk in sprites) delete sprites[kk];
+      spriteK = k;
+    }
+    let sp = sprites[key];
+    if (sp === undefined) {
+      sp = null;
+      if (typeof document !== 'undefined') {
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.ceil(w * k));
+        c.height = Math.max(1, Math.ceil(h * k));
+        const g = c.getContext('2d');
+        g.scale(c.width / w, c.height / h);
+        g.translate(-x0, -y0);
+        g.lineJoin = 'round';
+        g.lineCap = 'round';
+        draw(g);
+        sp = { c: c, x0: x0, y0: y0, w: w, h: h };
+      }
+      sprites[key] = sp;
+    }
+    return sp;
+  }
+  function blit(ctx, sp) {
+    ctx.drawImage(sp.c, sp.x0, sp.y0, sp.w, sp.h);
+  }
+
   function platformBody(ctx, p) {
-    const pal = PAL[p.type];
     ctx.save();
     if (p.dead) ctx.globalAlpha = Math.max(0, 1 - p.fade / 0.22);
     ctx.translate(p.x - p.w / 2, p.y);
+    const sp = sprite('plat-' + p.type + '-' + p.w + 'x' + p.h, -2, -2, p.w + 4, p.h + 4, function (g) {
+      platShape(g, p.type, p.w, p.h);
+    });
+    if (sp) blit(ctx, sp);
+    else platShape(ctx, p.type, p.w, p.h);
+    ctx.restore();
+    if (p.item && !p.item.used) item(ctx, p, p.item);
+  }
+
+  function platShape(ctx, type, w, h) {
+    const pal = PAL[type];
+    const p = { w: w, h: h, type: type };
     const x = 0;
     const y = 0;
     rr(ctx, x, y, p.w, p.h, 5.5);
@@ -204,8 +240,6 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.strokeStyle = pal.line;
       ctx.stroke();
     }
-    ctx.restore();
-    if (p.item && !p.item.used) item(ctx, p, p.item);
   }
 
   // 被踩到时整块平台（连同上面的道具）跟着 dip 弹簧往下沉一点再弹回来
@@ -219,7 +253,26 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   }
 
   // ---------- 平台上的道具 ----------
+  // 静止的弹簧 / 蹦床、喷气背包、螺旋桨帽（只是上下浮动）走贴图；弹出动画和飞翼这类一直在动的照旧矢量画
+  const ITEM_BOX = { spring: [-12, -20, 24, 24], tramp: [-24, -15, 48, 18], jet: [-14, -31, 28, 34], prop: [-16, -27, 32, 28] };
   function item(ctx, p, it) {
+    const box = ITEM_BOX[it.type];
+    if (box && !it.fired) {
+      const sp = sprite('item-' + it.type, box[0], box[1], box[2], box[3], function (g) {
+        itemRaw(g, { x: 0, y: 0 }, { type: it.type, ox: 0, fired: false, t: 0 }, true);
+      });
+      if (sp) {
+        const bob = it.type === 'prop' ? Math.sin(p.x * 0.05 + performance_now() * 3) * 1.2 : 0;
+        ctx.save();
+        ctx.translate(p.x + it.ox, p.y + bob);
+        blit(ctx, sp);
+        ctx.restore();
+        return;
+      }
+    }
+    itemRaw(ctx, p, it, false);
+  }
+  function itemRaw(ctx, p, it, still) {
     const x = p.x + it.ox;
     const y = p.y;
     ctx.save();
@@ -271,7 +324,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.strokeStyle = 'rgba(255,255,255,0.6)';
       ctx.stroke();
     } else if (it.type === 'prop') {
-      const bob = Math.sin(p.x * 0.05 + performance_now() * 3) * 1.2;
+      const bob = still ? 0 : Math.sin(p.x * 0.05 + performance_now() * 3) * 1.2;
       ctx.translate(x, y - 2 + bob);
       // 螺旋桨帽
       ctx.beginPath();
@@ -549,7 +602,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
   // 整个身体的路径：五条根粗尖细的胖手臂（一串渐变半径的圆叠出来）+ 中心圆盘，全在同一条路径里，
   // extra 是外扩的像素数（画外轮廓时用），整条路径一次 fill 出来就是一整块没有内部线条的剪影
-  function starPath(ctx, g, extra) {
+  function starPath(ctx, g, extra, n) {
     ctx.beginPath();
     const limbs = [
       [g.top, ARM_TIP + 0.5],
@@ -558,7 +611,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       [g.legs[0], ARM_TIP + 1.2],
       [g.legs[1], ARM_TIP + 1.2],
     ];
-    const N = 7;
+    const N = n || 7; // 残影只是一层半透明剪影，用 4 个圆叠一条手臂就够了，路径少一半
     for (let i = 0; i < limbs.length; i++) {
       const tx = limbs[i][0][0];
       const ty = limbs[i][0][1];
@@ -616,7 +669,7 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const g = starGeom(d);
     const xf = heroXf(d, g);
     if (xf.body !== ID) ctx.transform.apply(ctx, xf.body);
-    starPath(ctx, g, 1.5);
+    starPath(ctx, g, 1.5, 4);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = col || '#b6f783';
     ctx.fill();
@@ -888,7 +941,9 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
     // 3D 模式：身体和脸由 WebGL 光线步进渲染（真的有体积、光照和晃动的大肚子），道具配件仍用 2D 画在上面
     if (DJ.hero3d && DJ.hero3d.active()) {
+      const t3 = DJ.perf && DJ.perf.on ? performance.now() : 0;
       DJ.hero3d.draw(ctx, dd, g, xf.lean, xf.body);
+      if (t3) DJ.perf.h3 += performance.now() - t3;
     } else if (xf.spin !== ID) {
       ctx.save();
       ctx.transform.apply(ctx, xf.spin);
@@ -1524,12 +1579,14 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       ctx.font = DJ.font(11, 'normal');
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      const tw = ctx.measureText(DJ.perf.text).width;
+      const lines = DJ.perf.text.split('\n');
+      let tw = 0;
+      for (let i = 0; i < lines.length; i++) tw = Math.max(tw, ctx.measureText(lines[i]).width);
       ctx.fillStyle = 'rgba(40,40,30,0.62)';
-      rr(ctx, 6, 38, tw + 10, 17, 5);
+      rr(ctx, 6, 38, tw + 10, 4 + 14 * lines.length, 5);
       ctx.fill();
       ctx.fillStyle = '#fff';
-      ctx.fillText(DJ.perf.text, 11, 41);
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 11, 41 + 14 * i);
     }
   };
 
