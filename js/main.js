@@ -11,7 +11,7 @@
   const app = {
     game: game,
     // 老版本存过的 control（触屏/倾斜）设置已经没有意义，直接忽略
-    settings: Object.assign({ sound: true, sens: 1, hero3d: true, chill: false, fps: 120 }, DJ.store.get('settings', {})),
+    settings: Object.assign({ sound: true, sens: 1, hero3d: true, chill: false, fps: 120, perf: false }, DJ.store.get('settings', {})),
     scores: DJ.store.get('scores', []),
     newBest: false,
   };
@@ -21,6 +21,7 @@
   app.settings.hero3d = app.settings.hero3d !== false;
   app.settings.chill = app.settings.chill === true;
   if (app.settings.fps !== 60 && app.settings.fps !== 120) app.settings.fps = 120;
+  app.settings.perf = app.settings.perf === true;
   if (!Array.isArray(app.scores)) app.scores = [];
   app.scores = app.scores.filter(function (s) {
     return typeof s === 'number' && isFinite(s) && s > 0;
@@ -190,6 +191,10 @@
       case 'fps':
         app.settings.fps = app.settings.fps === 120 ? 60 : 120;
         applyFps();
+        save();
+        break;
+      case 'perf':
+        app.settings.perf = !app.settings.perf;
         save();
         break;
       case 'sens':
@@ -387,6 +392,34 @@
   });
   window.addEventListener('focus', DJ.onResume);
 
+  // ---------- 性能信息（设置里打开后显示在分数栏下面）----------
+  // rAF：浏览器每秒回调多少次 = WebView 实际跟着屏幕刷新的频率；画：每秒真正画了多少帧；
+  // 卡顿：最近 2 秒里两帧间隔超过正常间隔 1.5 倍的次数；JS：每帧脚本耗时（不含 GPU）
+  const perf = (DJ.perf = { text: '', raf: [], draws: [], gaps: [], js: 0, lastRaf: 0, t: 0 });
+  function perfTick(now, drew, jsMs) {
+    if (!app.settings.perf) return;
+    perf.raf.push(now);
+    while (perf.raf.length && perf.raf[0] < now - 1000) perf.raf.shift();
+    if (drew) {
+      if (perf.draws.length) perf.gaps.push([now, now - perf.draws[perf.draws.length - 1]]);
+      perf.draws.push(now);
+      perf.js += (jsMs - perf.js) * 0.1;
+    }
+    while (perf.draws.length && perf.draws[0] < now - 1000) perf.draws.shift();
+    while (perf.gaps.length && perf.gaps[0][0] < now - 2000) perf.gaps.shift();
+    if (now - perf.t < 250) return;
+    perf.t = now;
+    let hz = 0;
+    try {
+      if (window.NativeApp && window.NativeApp.getHz) hz = Math.round(window.NativeApp.getHz());
+    } catch (e) {}
+    const rafN = perf.raf.length;
+    const expect = 1000 / Math.min(app.settings.fps, Math.max(30, rafN));
+    let jank = 0;
+    for (let i = 0; i < perf.gaps.length; i++) if (perf.gaps[i][1] > expect * 1.5) jank++;
+    perf.text = (hz ? '屏幕 ' + hz + 'Hz · ' : '') + 'rAF ' + rafN + ' · 画 ' + perf.draws.length + ' 帧 · 卡顿 ' + jank + ' · JS ' + perf.js.toFixed(1) + 'ms';
+  }
+
   // ---------- 主循环 ----------
   let lastDraw = -1e9;
   let lastScreen = '';
@@ -397,17 +430,22 @@
       lastScreen = s0;
       poke();
     }
-    // 帧率上限：游戏中按设置（60 / 120），菜单等界面最多 60 帧
-    const cap = s0 === 'play' ? app.settings.fps : 60;
-    if (now - lastDraw < 1000 / cap - 2.5) return;
+    // 帧率上限：所有界面都按设置（60 / 120）
+    const cap = app.settings.fps;
+    if (now - lastDraw < 1000 / cap - 2.5) {
+      perfTick(now, false, 0);
+      return;
+    }
     // 静止界面：进场动画放完、也没人碰屏幕，就什么都不画（画面保持上一帧）
     const still = (s0 === 'pause' || s0 === 'scores' || (s0 === 'over' && !app.newBest)) && UI.tIn > 1.4 && now > dirtyUntil && !UI.pressed;
     DJ.audio.idle(s0 === 'play');
     if (still) {
       last = now;
+      perfTick(now, false, 0);
       return;
     }
     lastDraw = now;
+    const t0 = performance.now();
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
     DJ.clock = now / 1000;
@@ -453,6 +491,7 @@
     } else {
       UI.draw(ctx, app);
     }
+    perfTick(now, true, performance.now() - t0);
   }
   requestAnimationFrame(frame);
 

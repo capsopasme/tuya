@@ -9,12 +9,12 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   const SENS_LABEL = ['低', '中', '高'];
   // 设置页布局：第一个按钮的位置（屏幕高度的比例）和按钮行距；矮屏幕上收紧一点，五个开关加倾斜测试条也放得下
   function setY(H) {
-    return H < 600 ? 0.21 : 0.24;
+    return H < 520 ? 0.2 : H < 600 ? 0.21 : 0.24;
   }
   function setRow(H) {
-    return H < 600 ? 47 : 54;
+    return H < 520 ? 42 : H < 600 ? 47 : 54;
   }
-  const SET_N = 5; // 开关个数
+  const SET_N = 6; // 开关个数
 
   // 切换界面：tIn 从 0 开始计时，所有进场动画（淡入、弹出、按钮依次出现）都由它驱动。quiet=true 表示不要进场动画
   UI.go = function (name, quiet) {
@@ -75,14 +75,15 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     } else if (s === 'settings') {
       const y0 = H * setY(H);
       const R = setRow(H);
-      const bh = R < 50 ? 42 : 46;
+      const bh = R < 45 ? 38 : R < 50 ? 42 : 46;
       b.push(btn('chill', '畅快模式：' + (app.settings.chill ? '开' : '关'), y0, 190, bh));
       b.push(btn('sound', '声音：' + (app.settings.sound ? '开' : '关'), y0 + R, 190, bh));
       b.push(btn('sens', '灵敏度：' + SENS_LABEL[app.settings.sens], y0 + R * 2, 190, bh));
       const has3d = DJ.hero3d.supported();
       b.push(btn('hero', '主角：' + (app.settings.hero3d && has3d ? '3D' : '2D') + (has3d ? '' : '（不支持3D）'), y0 + R * 3, 190, bh, { small: !has3d }));
       b.push(btn('fps', app.settings.fps === 60 ? '帧率：60（省电）' : '帧率：120', y0 + R * 4, 190, bh, { small: app.settings.fps === 60 }));
-      b.push(btn('back', '返回', y0 + R * (SET_N - 1) + R + 4, 140, 42));
+      b.push(btn('perf', '性能信息：' + (app.settings.perf ? '开' : '关'), y0 + R * 5, 190, bh));
+      b.push(btn('back', '返回', y0 + R * (SET_N - 1) + R + 4, 140, bh < 42 ? 38 : 42));
     }
     return b;
   };

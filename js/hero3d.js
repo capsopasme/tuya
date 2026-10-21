@@ -16,9 +16,6 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   const BOX = { x: -58, y: -94, w: 116, h: 112 };
   // 省电：一个像素最多对应这么多“单位”的倒数（再高肉眼也看不出区别，片元着色器的开销却按像素数平方涨）
   const MAX_PPU = 2.2;
-  // 省电：姿态最多每 1/60 秒重新光线步进一次；120Hz 屏幕上中间那一帧直接复用上一张图，
-  // 只把这段时间里身体转过的角度（倾斜 / 旋转）用 2D 变换补上，所以转起来照样是 120Hz 顺滑的
-  const MIN_GAP = 1 / 70;
   H3.BOX = BOX;
 
   let canvas = null;
@@ -26,7 +23,6 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
   let prog = null;
   let U = null;
   let have = false; // 离屏画布里有没有一张能用的图
-  let lastT = -1; // 上一次真正光线步进的时间
   let cw = 0;
   let ch = 0;
 
@@ -299,8 +295,6 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
 
   const vals = new Float32Array(48);
   const prev = new Float32Array(48);
-  // 上一次渲染时的“世界 -> 身体”变换（canvas 的 a,b,c,d,e,f），复用旧图时用来补上身体转过的角度
-  const M0 = [1, 0, 0, 1, 0, 0];
   const ID = [1, 0, 0, 1, 0, 0];
   function inv(m) {
     const det = m[0] * m[3] - m[1] * m[2] || 1;
@@ -309,16 +303,6 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     const c = -m[2] / det;
     const d = m[0] / det;
     return [a, b, c, d, -(a * m[4] + c * m[5]), -(b * m[4] + d * m[5])];
-  }
-  function mul(m, n) {
-    return [
-      m[0] * n[0] + m[2] * n[1],
-      m[1] * n[0] + m[3] * n[1],
-      m[0] * n[2] + m[2] * n[3],
-      m[1] * n[2] + m[3] * n[3],
-      m[0] * n[4] + m[2] * n[5] + m[4],
-      m[1] * n[4] + m[3] * n[5] + m[5],
-    ];
   }
   // 包围球：身体中心到最远的手臂尖 + 手臂尖的半径；z 方向肚子最多鼓到 ~24 个单位
   function boundR(g) {
@@ -369,14 +353,10 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     // 姿态完全没变（暂停、结算、菜单里两帧之间、屏幕边缘的第二份）就不必重画
     let same = have;
     for (let k = 0; k < i && same; k++) if (Math.abs(vals[k] - prev[k]) > 0.004) same = false;
-    const now = DJ.clock || 0;
-    // 姿态变了，但离上次渲染还不到 1/60 秒：先复用旧图（120Hz 屏幕上每两帧才真正渲染一次）
-    const reuse = !same && have && now - lastT >= 0 && now - lastT < MIN_GAP;
-    if (!same && !reuse) {
+    // 每一帧都按最新姿态重新渲染（肚子、手臂、腿是眼睛一直盯着的东西，隔帧更新在 120Hz 下会显得像 60 帧）
+    if (!same) {
       prev.set(vals);
-      lastT = now;
       have = true;
-      for (let k = 0; k < 6; k++) M0[k] = body[k];
       const mi = inv(body);
       gl.viewport(0, 0, w, h);
       gl.clearColor(0, 0, 0, 0);
@@ -398,10 +378,9 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
       gl.uniform1f(U.uDead, dead ? 1 : 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
-    // 图是在“没有倾斜”的角色坐标里渲染的：先撤掉 ctx 上的 lean；复用旧图时再补上身体从那时到现在转过的角度
+    // 图是在“没有倾斜”的角色坐标里渲染的：先撤掉 ctx 上的 lean
     ctx.save();
     ctx.transform.apply(ctx, inv(lean));
-    if (reuse) ctx.transform.apply(ctx, mul(body, inv(M0)));
     ctx.drawImage(canvas, BOX.x, BOX.y, BOX.w, BOX.h);
     ctx.restore();
   };

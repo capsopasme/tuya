@@ -45,10 +45,33 @@ public class MainActivity extends Activity implements SensorEventListener {
         public void setFps(final float hz) {
             runOnUiThread(() -> applyRefreshRate(hz));
         }
+
+        /** 屏幕当前实际的刷新率（Hz），给设置里的“性能信息”显示用 */
+        @JavascriptInterface
+        public float getHz() {
+            try {
+                Display d = getDisplay();
+                return d == null ? 0f : d.getRefreshRate();
+            } catch (RuntimeException e) {
+                return 0f;
+            }
+        }
+    }
+
+    private float wantHz = 120f;
+
+    // 通过反射调用较新系统才有的方法：老系统上没有就什么都不做，也不会因为 compileSdk 不够新而编译失败
+    private static void call(Object target, String name, Class<?> type, Object arg) {
+        if (target == null) return;
+        try {
+            target.getClass().getMethod(name, type).invoke(target, arg);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+        }
     }
 
     // 选一个分辨率和当前一样、刷新率最接近 hz 的显示模式；preferredDisplayModeId 比 preferredRefreshRate 更能让系统照办
     private void applyRefreshRate(float hz) {
+        wantHz = hz;
         Window w = getWindow();
         WindowManager.LayoutParams lp = w.getAttributes();
         lp.preferredRefreshRate = hz;
@@ -66,6 +89,12 @@ public class MainActivity extends Activity implements SensorEventListener {
         } catch (RuntimeException ignored) {
         }
         w.setAttributes(lp);
+        // Android 15 起系统会按 View 的“投票”动态选刷新率：普通 View 默认只投 60Hz，只有手指在屏幕上时才临时提到高刷。
+        // 这个游戏全程靠倾斜操作、几乎不碰屏幕，所以不额外声明的话会一直被压在 60Hz —— 这里让 WebView 明确投 hz，
+        // 并在 120 档时关掉窗口的“为省电平衡刷新率”
+        boolean high = hz > 61f;
+        call(web, "setRequestedFrameRate", float.class, hz);
+        call(w, "setFrameRatePowerSavingsBalanced", boolean.class, !high);
     }
 
     /** 暴露给网页：window.NativeTilt.get() 返回当前左右倾斜角（度） */
@@ -134,6 +163,7 @@ public class MainActivity extends Activity implements SensorEventListener {
             web.addJavascriptInterface(new TiltBridge(), "NativeTilt");
         }
         web.addJavascriptInterface(new AppBridge(), "NativeApp");
+        applyRefreshRate(wantHz); // WebView 建好了，把它的刷新率投票也补上
 
         // 触屏操控模式下，按住屏幕左右边缘时不要触发系统的返回手势
         web.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
@@ -159,6 +189,7 @@ public class MainActivity extends Activity implements SensorEventListener {
     protected void onResume() {
         super.onResume();
         web.onResume();
+        applyRefreshRate(wantHz); // 切回来时系统可能重置了刷新率偏好
         if (accel != null) {
             sensors.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME);
         }

@@ -21,6 +21,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await tapButton(page, 'back');
       await sleep(150);
     }
+    // 矮屏幕（近方形）上的设置页：六个开关 + 倾斜测试条都要放得下
+    await page.setViewportSize({ width: 600, height: 700 });
+    await sleep(150);
+    await tapButton(page, 'settings');
+    await sleep(700);
+    await page.screenshot({ path: path.join(OUT, 'settings-short.png') });
+    await tapButton(page, 'back');
+    await page.setViewportSize({ width: 412, height: 915 });
+    await sleep(150);
     await tapButton(page, 'play');
     await sleep(100);
 

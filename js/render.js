@@ -1520,6 +1520,17 @@ var DJ = (globalThis.DJ = globalThis.DJ || {});
     }
     letterbox(ctx);
     hud(ctx, Math.round(DJ.shownScore === undefined ? g.score : DJ.shownScore), g.chill);
+    if (!frozen && DJ.app && DJ.app.settings.perf && DJ.perf && DJ.perf.text) {
+      ctx.font = DJ.font(11, 'normal');
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const tw = ctx.measureText(DJ.perf.text).width;
+      ctx.fillStyle = 'rgba(40,40,30,0.62)';
+      rr(ctx, 6, 38, tw + 10, 17, 5);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(DJ.perf.text, 11, 41);
+    }
   };
 
   // 菜单里用的假小海星

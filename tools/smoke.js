@@ -62,6 +62,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await tapButton(page, 'fps');
     check(await page.evaluate(() => DJ.app.settings.fps === 120 && window.__fps[window.__fps.length - 1] === 120), '帧率切回 120');
     await page.evaluate(() => delete window.NativeApp);
+    // 性能信息：默认关，打开后存档；后面进游戏时检查它真的有数字
+    check(await page.evaluate(() => DJ.app.settings.perf === false), '性能信息默认关闭');
+    await tapButton(page, 'perf');
+    check(await page.evaluate(() => DJ.app.settings.perf === true && JSON.parse(localStorage.getItem('tuya.settings')).perf === true), '性能信息开关生效并保存');
     await tapButton(page, 'back');
     check(await page.evaluate(() => DJ.ui.screen === 'menu'), '能从设置返回');
 
@@ -70,6 +74,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await tapButton(page, 'play');
     await sleep(200);
     check(await page.evaluate(() => DJ.ui.screen === 'play'), '点“开始游戏”进入游戏');
+    await sleep(400);
+    {
+      const pt = await page.evaluate(() => DJ.perf.text);
+      check(/rAF \d+ · 画 \d+ 帧/.test(pt), '性能信息在游戏中有数字（' + pt + '）');
+    }
     // 在起始平台那一排铺满平台当安全网：下面要左右猛倾斜，别让角色走出平台摔死导致后面的测试误报
     await page.evaluate(() => {
       const g = DJ.app.game;
