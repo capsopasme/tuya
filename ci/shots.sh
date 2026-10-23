@@ -29,15 +29,17 @@ shot() { adb exec-out screencap -p > "$OUT/$1.png"; }
 if [ -f old.apk ]; then
   adb install -r old.apk
   adb shell am start -n $PKG/.MainActivity
-  sleep 15
+  sleep 30
   shot old-menu
   # 开始游戏按钮（逻辑坐标 (160, 0.34H+24)，1080x2400 屏上约 (540, 897)）
   adb shell input tap 270 448
-  sleep 4
+  sleep 8
+  adb shell input tap 270 448
+  sleep 8
   shot old-play
   # 把手机“歪”过去，让小海星掉下去结束这一局
   adb emu sensor set acceleration -5:8.4:0
-  sleep 20
+  sleep 40
   shot old-over
   adb emu sensor set acceleration 0:9.81:0
   adb shell am force-stop $PKG
