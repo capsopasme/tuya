@@ -10,6 +10,9 @@ adb shell settings put system screen_off_timeout 1800000
 adb shell svc power stayon true
 # 不要弹“全屏查看”的提示（会挡住点击）
 adb shell settings put secure immersive_mode_confirmations confirmed
+# 模拟器是纯软件 GPU，1080x2400 下一帧要画好几百毫秒；降到一半分辨率（比例不变，逻辑布局完全一样）
+adb shell wm size 540x1200
+adb shell wm density 210
 adb shell wm size >> $OUT/device.txt
 adb shell wm density >> $OUT/device.txt
 adb shell getprop ro.build.version.sdk >> $OUT/device.txt
@@ -23,8 +26,9 @@ if [ -f old.apk ]; then
   sleep 15
   shot old-menu
   # 开始游戏按钮（逻辑坐标 (160, 0.34H+24)，1080x2400 屏上约 (540, 897)）
-  adb shell input tap 540 897
-  sleep 2
+  adb shell input tap 270 448
+  sleep 4
+  shot old-play
   # 把手机“歪”过去，让小海星掉下去结束这一局
   adb emu sensor set acceleration -5:8.4:0
   sleep 20
@@ -44,7 +48,7 @@ adb shell am force-stop $PKG
 adb shell am start -n $ACT
 sleep 10
 shot menu
-adb shell input tap 540 897
+adb shell input tap 270 448
 sleep 5
 shot touch-play
 adb shell input keyevent KEYCODE_BACK

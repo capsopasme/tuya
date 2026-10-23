@@ -309,7 +309,7 @@ final class Ui {
         } else if (s == SCORES) {
             text("排行榜", W / 2, 70, 38, INK, Paint.Align.CENTER);
             int[] list = store.scores;
-            if (list.length == 0) text("还没有成绩，快去玩一局吧", W / 2, 160, 18, 0xff6b6b60, Paint.Align.CENTER);
+            if (list.length == 0) text("还没有成绩，快去玩一局吧", W / 2, 128 + 5 * 42 + 16, 18, 0xff6b6b60, Paint.Align.CENTER);
             for (int i = 0; i < 5; i++) {
                 float y = 128 + i * 42;
                 text(rankS[i], 70, y, 24, 0xff6b6b60, Paint.Align.LEFT);
