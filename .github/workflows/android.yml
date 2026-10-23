@@ -40,11 +40,21 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # 版本号：推 tag 时取 tag；push 到 main 时取 android/version.txt，这个版本还没有 Release 就自动发一个
+      # （改一下 version.txt 再 push 就是发新版，不用手动打 tag）
       - name: Version
         id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "$REL_TAG" == v* ]]; then
-            echo "name=${REL_TAG#v}" >> "$GITHUB_OUTPUT"
+          TAG="$REL_TAG"
+          if [[ "$TAG" != v* && "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]; then
+            V="v$(tr -d '[:space:]' < android/version.txt)"
+            if ! gh release view "$V" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then TAG="$V"; fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == v* ]]; then
+            echo "name=${TAG#v}" >> "$GITHUB_OUTPUT"
           else
             echo "name=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
@@ -80,15 +90,16 @@ jobs:
       # 在 GitHub 网页上“新建 Release”时会同时创建 tag：Release 已经存在，就把 APK 传上去（覆盖同名文件）；
       # 用 git push 推 tag 时还没有 Release，就新建一个
       - name: Publish release
-        if: startsWith(env.REL_TAG, 'v')
+        if: startsWith(steps.ver.outputs.tag, 'v')
         env:
           GH_TOKEN: ${{ github.token }}
+          REL_TAG: ${{ steps.ver.outputs.tag }}
           APK: tuya-${{ steps.ver.outputs.name }}.apk
         run: |
           NOTES="$(cat .github/release-notes.md 2>/dev/null || echo '安卓 APK，直接安装即可（竖屏、离线、无需任何权限）。')"
           if gh release view "$REL_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$REL_TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$REL_TAG" "$APK" --repo "$GITHUB_REPOSITORY" \
+            gh release create "$REL_TAG" "$APK" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --title "涂鸦蹦蹦 $REL_TAG" --notes "$NOTES"
           fi

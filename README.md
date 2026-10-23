@@ -6,8 +6,8 @@
 
 ## 安装
 
-1. 发版：`git tag v2.0.0 && git push origin v2.0.0`，或者在 GitHub 网页上新建一个 Release（tag 填 `v2.0.0` 这种格式）。
-2. 等 Actions 里的 *Build Android APK* 跑完，APK 会自动挂到这个 Release 上，在 **Releases** 页下载 `tuya-2.0.0.apk` 安装。
+1. 发版：把 `android/version.txt` 改成新版本号（如 `2.0.1`）push 到 main，这个版本还没有 Release 就会自动发一个；也可以照旧推 tag（`git tag v2.0.1 && git push origin v2.0.1`）或者在 GitHub 网页上新建 Release。
+2. 等 Actions 里的 *Build Android APK* 跑完，APK 会自动挂到这个 Release 上，在 **Releases** 页下载 `tuya-2.0.0.apk` 这样的文件安装。
    某个版本没挂上 APK 时，可以在 Actions 里手动运行 *Build Android APK*，填上那个 tag 补发。
 3. 日常 push 到 main 也会构建，APK 在该次运行的 Artifacts 里。
 
