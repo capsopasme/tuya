@@ -200,6 +200,16 @@ public final class MainActivity extends Activity implements SensorEventListener,
         return d == null ? 0 : d.getRefreshRate();
     }
 
+    @Override
+    public String hzInfo() {
+        Display d = getDisplay();
+        if (d == null) return "屏幕 ?";
+        float max = 0;
+        for (Display.Mode m : d.getSupportedModes()) max = Math.max(max, m.getRefreshRate());
+        return String.format(java.util.Locale.ROOT, "屏幕 %dHz（模式 %d · 最高 %d · 申请 %d）", Math.round(d.getRefreshRate()),
+                Math.round(d.getMode().getRefreshRate()), Math.round(max), wantHz);
+    }
+
     // ---------- 渲染线程耗时（FrameMetrics，只在打开“性能信息”时监听） ----------
     private volatile float gpuMs;
     private Window.OnFrameMetricsAvailableListener fmListener;

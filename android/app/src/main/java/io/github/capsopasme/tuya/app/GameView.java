@@ -37,6 +37,9 @@ final class GameView extends View implements Choreographer.FrameCallback {
 
         float displayHz();
 
+        /** 刷新率诊断：系统给这个应用报告的刷新率 / 当前显示模式 / 屏幕支持的最高刷新率 */
+        String hzInfo();
+
         float gpuMs();
 
         void setPerfListening(boolean on);
@@ -248,6 +251,11 @@ final class GameView extends View implements Choreographer.FrameCallback {
     public void doFrame(long now) {
         if (!running) return;
         Choreographer.getInstance().postFrameCallback(this);
+        if (store.perf) {
+            vsyncs[vHead] = now;
+            vHead = (vHead + 1) % vsyncs.length;
+            if (vCount < vsyncs.length) vCount++;
+        }
         // 帧率上限：60 档时（屏幕没能切到 60Hz 的话）每隔一帧才画一次
         if (now - lastDraw < (long) (1e9 / store.fps) - 2_500_000L) {
             perfTick(now, false);
@@ -319,6 +327,9 @@ final class GameView extends View implements Choreographer.FrameCallback {
 
     // ---------- 性能信息 ----------
     private final long[] frames = new long[512];
+    // 每次垂直同步回调的时间：数一秒内有多少次 = 系统实际给这个应用的刷新率（和画没画无关）
+    private final long[] vsyncs = new long[512];
+    private int vHead, vCount;
     private int fHead, fCount;
     private long perfT;
     private double cpuAvg;
@@ -348,9 +359,10 @@ final class GameView extends View implements Choreographer.FrameCallback {
             if (prev != 0 && t > now - 2_000_000_000L && t - prev > expect) jank++;
             prev = t;
         }
-        float hz = host.displayHz();
+        int vs = 0;
+        for (int i = 0; i < vCount; i++) if (vsyncs[(vHead - vCount + i + vsyncs.length) % vsyncs.length] > now - 1_000_000_000L) vs++;
         float gpu = host.gpuMs();
-        perfText = String.format(Locale.ROOT, "屏幕 %dHz · 画 %d 帧/秒 · 卡顿 %d/2秒\nCPU %.1fms · 渲染线程 %.1fms · %s", Math.round(hz), drawn, jank,
+        perfText = String.format(Locale.ROOT, "%s · vsync %d/秒\n画 %d 帧/秒 · 卡顿 %d/2秒\nCPU %.1fms · 渲染线程 %.1fms · %s", host.hzInfo(), vs, drawn, jank,
                 cpuAvg, gpu, scene.hero.use3d && scene.has3d() ? "3D" : "2D");
     }
 
