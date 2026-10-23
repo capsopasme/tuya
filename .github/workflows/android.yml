@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '要补发 APK 的版本 tag（如 v1.1.0）；留空则只构建不发布'
+        description: '要补发 APK 的版本 tag（如 v2.0.0）；留空则只构建不发布'
         required: false
         default: ''
 
@@ -26,17 +26,18 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      # 先跑一遍游戏逻辑模拟，关卡生成或物理改坏了会在这里挂掉
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Game logic simulation
-        run: node tools/sim.js
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
+      # 先跑一遍游戏逻辑模拟（纯 Java，不依赖安卓），关卡生成或物理改坏了会在这里挂掉
+      - name: Game logic simulation
+        run: |
+          mkdir -p "$RUNNER_TEMP/sim"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/sim" android/app/src/main/java/io/github/capsopasme/tuya/game/*.java
+          java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -cp "$RUNNER_TEMP/sim" io.github.capsopasme.tuya.game.Sim
+
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Version
@@ -65,7 +66,8 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew --no-daemon assembleRelease -PversionName=${{ steps.ver.outputs.name }} -PversionCode=${{ github.run_number }}
+        # versionCode 从 100 起跳：一定比旧版（WebView 版，最多几十次构建）大，能直接覆盖安装
+        run: ./gradlew --no-daemon assembleRelease -PversionName=${{ steps.ver.outputs.name }} -PversionCode=$((100 + ${{ github.run_number }}))
 
       - name: Collect APK
         run: cp android/app/build/outputs/apk/release/app-release.apk "tuya-${{ steps.ver.outputs.name }}.apk"
@@ -83,10 +85,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APK: tuya-${{ steps.ver.outputs.name }}.apk
         run: |
+          NOTES="$(cat .github/release-notes.md 2>/dev/null || echo '安卓 APK，直接安装即可（竖屏、离线、无需任何权限）。')"
           if gh release view "$REL_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$REL_TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$REL_TAG" "$APK" --repo "$GITHUB_REPOSITORY" \
-              --title "涂鸦蹦蹦 $REL_TAG" \
-              --notes "安卓 APK，直接安装即可（竖屏、离线、无需任何权限）。"
+              --title "涂鸦蹦蹦 $REL_TAG" --notes "$NOTES"
           fi

@@ -3,7 +3,7 @@ plugins {
 }
 
 def appVersionCode = (project.findProperty('versionCode') ?: '1').toString().toInteger()
-def appVersionName = (project.findProperty('versionName') ?: '1.0.0').toString()
+def appVersionName = (project.findProperty('versionName') ?: '2.0.0').toString()
 
 android {
     namespace 'io.github.capsopasme.tuya'
@@ -11,7 +11,8 @@ android {
 
     defaultConfig {
         applicationId 'io.github.capsopasme.tuya'
-        minSdk 30
+        // 3D 主角用的 AGSL 着色器需要 Android 13（API 33）；12 上自动退回 2D 主角
+        minSdk 31
         targetSdk 35
         versionCode appVersionCode
         versionName appVersionName
@@ -39,7 +40,9 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
@@ -53,24 +56,7 @@ android {
         abortOnError false
     }
 
-    // 游戏本体就是仓库根目录的 index.html / css / js，构建时复制进 assets，不另存一份
-    sourceSets {
-        main {
-            assets.srcDirs += layout.buildDirectory.dir('web').get().asFile
-        }
+    packaging {
+        resources.excludes += ['META-INF/**', 'kotlin/**', '*.properties']
     }
-}
-
-tasks.register('copyWeb', Copy) {
-    from(rootProject.projectDir.parentFile) {
-        include 'index.html', 'icon.svg', 'css/**', 'js/**'
-    }
-    into layout.buildDirectory.dir('web')
-}
-tasks.named('preBuild') {
-    dependsOn 'copyWeb'
-}
-
-dependencies {
-    implementation 'androidx.webkit:webkit:1.12.1'
 }

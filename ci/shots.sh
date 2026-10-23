@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# 在 CI 的安卓模拟器里跑一遍：旧版 -> 新版的成绩迁移、各个场景截图、自动演示的帧统计、logcat。
+# 结果都写进 out/，由工作流推到 ci-shots 分支。
+set -x
+PKG=io.github.capsopasme.tuya
+ACT=$PKG/.app.MainActivity
+OUT=out
+mkdir -p $OUT
+adb shell settings put system screen_off_timeout 1800000
+adb shell svc power stayon true
+adb shell wm size >> $OUT/device.txt
+adb shell wm density >> $OUT/device.txt
+adb shell getprop ro.build.version.sdk >> $OUT/device.txt
+
+shot() { adb exec-out screencap -p > "$OUT/$1.png"; }
+
+# ---- 1) 迁移测试：先装旧版（WebView 版）玩一局，再覆盖安装新版 ----
+if [ -f old.apk ]; then
+  adb install -r old.apk
+  adb shell am start -n $PKG/.MainActivity
+  sleep 8
+  shot old-menu
+  # 开始游戏按钮（逻辑坐标 (160, 0.34H+24)，1080x2400 屏上约 (540, 897)）
+  adb shell input tap 540 897
+  sleep 2
+  # 把手机“歪”过去，让小海星掉下去结束这一局
+  adb emu sensor set acceleration -5:8.4:0
+  sleep 12
+  shot old-over
+  adb emu sensor set acceleration 0:9.81:0
+  adb shell am force-stop $PKG
+fi
+adb install -r app.apk
+adb logcat -c
+adb shell am start -n $ACT --es scene scores
+sleep 6
+shot migrated-scores
+adb logcat -d | grep -E "tuya|AndroidRuntime|FATAL" > $OUT/logcat-migrate.txt
+
+# ---- 2) 真实点击流程：菜单 -> 开始 -> 返回键暂停 ----
+adb shell am force-stop $PKG
+adb shell am start -n $ACT
+sleep 4
+shot menu
+adb shell input tap 540 897
+sleep 3
+shot touch-play
+adb shell input keyevent KEYCODE_BACK
+sleep 2
+shot touch-pause
+adb shell input keyevent KEYCODE_BACK
+sleep 1
+
+# ---- 3) 各个场景（状态冻结在某一帧，方便检查画面） ----
+for s in settings scores play spring tramp prop jet wings dark glide shield monsters dead pause over 2d-play 2d-wings 2d-dark 2d-jet; do
+  adb shell am force-stop $PKG
+  adb shell am start -n $ACT --es scene $s
+  sleep 4
+  shot $s
+done
+
+# ---- 4) 自动演示：机器人一直玩，统计帧 ----
+adb shell am force-stop $PKG
+adb shell dumpsys gfxinfo $PKG reset > /dev/null
+adb shell am start -n $ACT --es scene live
+sleep 6
+shot live-1
+sleep 6
+shot live-2
+sleep 8
+shot live-3
+adb shell dumpsys gfxinfo $PKG > $OUT/gfxinfo.txt
+adb shell dumpsys SurfaceFlinger --latency > /dev/null 2>&1
+adb logcat -d | grep -E "tuya|AndroidRuntime|FATAL|RuntimeShader|SkSL|Choreographer" > $OUT/logcat.txt
+adb shell pidof $PKG > $OUT/pid.txt
+exit 0
