@@ -13,6 +13,12 @@ adb shell settings put secure immersive_mode_confirmations confirmed
 # 模拟器是纯软件 GPU，1080x2400 下一帧要画好几百毫秒；降到一半分辨率（比例不变，逻辑布局完全一样）
 adb shell wm size 540x1200
 adb shell wm density 210
+# 改分辨率后桌面会卡一下弹“无响应”，挡住画面：关掉错误弹窗，重启桌面
+adb shell settings put global hide_error_dialogs 1
+adb shell am force-stop com.google.android.apps.nexuslauncher
+sleep 10
+adb shell input keyevent KEYCODE_HOME
+sleep 5
 adb shell wm size >> $OUT/device.txt
 adb shell wm density >> $OUT/device.txt
 adb shell getprop ro.build.version.sdk >> $OUT/device.txt
