@@ -12,7 +12,7 @@ import io.github.capsopasme.tuya.game.Snd;
 
 /** 音效：启动时在后台线程离线合成成 WAV，交给 SoundPool（原生混音、低延迟）。 */
 final class Sfx {
-    private static final int VERSION = 1; // 合成配方改了就加一，让缓存的 WAV 重新生成
+    private static final int VERSION = 2; // 合成配方改了就加一，让缓存的 WAV 重新生成
     private final SoundPool pool;
     private final int[] ids = new int[Snd.COUNT];
     // 按 SoundPool 的 sampleId 记录加载完成（回调可能比 load() 返回还早，所以不按音效编号记）

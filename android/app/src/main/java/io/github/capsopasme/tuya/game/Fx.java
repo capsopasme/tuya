@@ -5,7 +5,7 @@ public final class Fx {
     public static final int PUFF = 0, RING = 1, SHOCK = 2, PART = 3, GLOW = 4, BEAM = 5, RAYS = 6, TEXT = 7,
             GHOST = 8, FEATHER = 9, SPIRAL = 10, FIRE = 11, STREAK = 12;
     // 粒子形状
-    public static final int S_DOT = 0, S_STAR = 1, S_FIRE = 2;
+    public static final int S_DOT = 0, S_STAR = 1, S_FIRE = 2, S_HEART = 3, S_LEAF = 4, S_SHARD = 5;
 
     public int k;
     public double x, y, vx, vy, r, life, max, delay;

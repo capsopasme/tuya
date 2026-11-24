@@ -66,7 +66,7 @@ adb shell input keyevent KEYCODE_BACK
 sleep 1
 
 # ---- 3) 各个场景（状态冻结在某一帧，方便检查画面） ----
-for s in settings scores play spring tramp prop jet wings dark glide shield monsters dead pause over 2d-play 2d-wings 2d-dark 2d-jet; do
+for s in items dragon dragon-end life luck revive settings scores play spring tramp prop jet wings dark glide shield monsters dead pause over 2d-play 2d-wings 2d-dark 2d-jet dragon2 2d-dragon2; do
   adb shell am force-stop $PKG
   adb shell am start -n $ACT --es scene $s
   sleep 9

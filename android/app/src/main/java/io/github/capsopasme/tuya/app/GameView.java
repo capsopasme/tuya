@@ -479,6 +479,75 @@ final class GameView extends View implements Choreographer.FrameCallback {
                 steps(type <= Entities.I_TRAMP ? 0.12 : type >= Entities.I_WINGS ? 0.5 : 0.35);
                 break;
             }
+            case "dragon":
+                // 变身那一瞬间（火焰炸开、巨龙蹦出来）
+                fastForward(4);
+                game.debugGive(Entities.I_DRAGON);
+                steps(0.3);
+                break;
+            case "dragon2": {
+                // 飞行中：前面有怪物，龙息火球正在飞
+                fastForward(4);
+                game.debugGive(Entities.I_DRAGON);
+                steps(1.6);
+                Hero d = game.dd;
+                game.dd.vx = 160;
+                Entities.Monster m = game.makeMonster(Entities.M_FLYER, d.x - 90, d.y - 300);
+                game.monsters.add(m);
+                Entities.Monster m2 = game.makeMonster(Entities.M_BLOB, d.x + 70, d.y - 420);
+                m2.amp = 0;
+                game.monsters.add(m2);
+                steps(0.06);
+                break;
+            }
+            case "dragon-end":
+                fastForward(4);
+                game.debugGive(Entities.I_DRAGON);
+                steps(C.DRAGON_T + 0.15);
+                break;
+            case "life":
+                fastForward(4);
+                game.debugGive(Entities.I_LIFE);
+                game.debugGive(Entities.I_LIFE);
+                steps(0.15);
+                break;
+            case "luck":
+                fastForward(4);
+                game.debugGive(Entities.I_LIFE);
+                game.debugGive(Entities.I_LUCK);
+                steps(0.2);
+                break;
+            case "revive": {
+                // 有一次复活机会时掉出屏幕：从底下被弹回来
+                fastForward(4);
+                game.lives = 1;
+                game.platforms.clear();
+                game.dd.vy = 900;
+                game.dd.glide = 0;
+                for (int i = 0; i < 400 && game.lives > 0; i++) game.update(STEP, 0);
+                steps(0.22);
+                break;
+            }
+            case "items": {
+                // 三种新道具摆在眼前的平台上
+                fastForward(3);
+                double cy = game.camY;
+                int[] types = {Entities.I_LIFE, Entities.I_LUCK, Entities.I_DRAGON};
+                double[] xs = {60, 160, 260};
+                for (int i = 0; i < 3; i++) {
+                    Entities.Platform p = game.addPlatform(Entities.P_NORMAL, xs[i], cy + 150 + (i == 1 ? 60 : 0));
+                    p.vx = 0;
+                    p.item = new Entities.Item(types[i], 0);
+                }
+                game.lives = 2;
+                game.luck = true;
+                game.luckEndY = game.dd.y - 3000;
+                game.dd.y = cy + game.H - 60;
+                game.dd.vy = -200;
+                game.dd.x = 200;
+                steps(0.02);
+                break;
+            }
             case "glide":
                 fastForward(4);
                 game.debugGive(Entities.I_JET);

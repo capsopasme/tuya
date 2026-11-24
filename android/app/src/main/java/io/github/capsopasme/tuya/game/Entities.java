@@ -7,7 +7,8 @@ public final class Entities {
     // 平台类型
     public static final int P_NORMAL = 0, P_MOVING = 1, P_BROWN = 2, P_WHITE = 3;
     // 道具类型
-    public static final int I_SPRING = 0, I_TRAMP = 1, I_PROP = 2, I_JET = 3, I_WINGS = 4, I_DARK = 5;
+    public static final int I_SPRING = 0, I_TRAMP = 1, I_PROP = 2, I_JET = 3, I_WINGS = 4, I_DARK = 5,
+            I_LIFE = 6, I_LUCK = 7, I_DRAGON = 8;
     // 怪物
     public static final int M_BLOB = 0, M_FLYER = 1, M_UFO = 2;
 
@@ -18,7 +19,20 @@ public final class Entities {
             {26, 32}, // jet
             {36, 30}, // wings
             {38, 32}, // dark
+            {26, 28}, // 生命果实
+            {26, 28}, // 幸运果实
+            {30, 40}, // 变身药剂
     };
+
+    /** 悬浮在平台上方、碰到就拿走的道具 */
+    public static boolean pickup(int type) {
+        return type >= I_PROP;
+    }
+
+    /** 果实：不改变飞行状态，飞行中也能顺路收走 */
+    public static boolean fruit(int type) {
+        return type == I_LIFE || type == I_LUCK;
+    }
 
     public static final class Item {
         public int type;
@@ -59,6 +73,7 @@ public final class Entities {
 
     public static final class Bullet {
         public double x, y, vx, vy, life, px, py;
+        public boolean fire; // 飞龙的龙息火球：一下就烧死怪物
     }
 
     public static final class Debris {

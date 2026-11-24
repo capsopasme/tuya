@@ -222,6 +222,72 @@ final class Synth {
                 tone(TRIANGLE, 330, 330, 0.18, 0.22, 0.18);
                 tone(TRIANGLE, 262, 262, 0.32, 0.22, 0.36);
                 break;
+            case Snd.LIFE: {
+                // 叮叮叮往上跳的大三和弦 + 一声软软的“啵”
+                double[] notes = {784, 988, 1175, 1568};
+                for (int i = 0; i < notes.length; i++) {
+                    tone(TRIANGLE, notes[i], notes[i], 0.18, 0.2, i * 0.06);
+                    tone(SINE, notes[i] * 2, notes[i] * 2, 0.12, 0.05, i * 0.06 + 0.01);
+                }
+                tone(SINE, 300, 600, 0.12, 0.2, 0);
+                break;
+            }
+            case Snd.REVIVE: {
+                // 往上扫的光 + 一个明亮的长和弦，带一点闪闪的噪声
+                tone(SINE, 180, 900, 0.6, 0.3, 0);
+                tone(TRIANGLE, 360, 1800, 0.45, 0.06, 0);
+                noise(0.5, 0.12, 6000, 0.05);
+                double[] chord = {523, 659, 784, 1047};
+                for (int i = 0; i < chord.length; i++) {
+                    tone(TRIANGLE, chord[i], chord[i], 0.7, 0.14, 0.18 + i * 0.03);
+                    tone(SINE, chord[i] * 2, chord[i] * 2, 0.5, 0.04, 0.2 + i * 0.03);
+                }
+                break;
+            }
+            case Snd.LUCK: {
+                // 五声音阶的一串亮晶晶快速琶音
+                double[] notes = {1047, 1175, 1319, 1568, 1760, 2093, 2349};
+                for (int i = 0; i < notes.length; i++) {
+                    tone(TRIANGLE, notes[i], notes[i], 0.14, 0.15, i * 0.04);
+                    tone(SINE, notes[i] * 1.5, notes[i] * 1.5, 0.1, 0.04, i * 0.04 + 0.02);
+                }
+                noise(0.3, 0.06, 8000, 0);
+                break;
+            }
+            case Snd.DRAGON: {
+                // 玻璃碎 -> 一口吸气 -> 低沉的龙吼（锯齿 + 方波 + 噪声 + 超低音）-> 一段铜管味的号角
+                noise(0.12, 0.25, 7000, 0);
+                tone(TRIANGLE, 2400, 1800, 0.08, 0.06, 0);
+                tone(SINE, 1600, 140, 0.2, 0.12, 0.02);
+                tone(SAW, 190, 58, 1.0, 0.16, 0.2);
+                tone(SAW, 196, 61, 0.9, 0.08, 0.21);
+                tone(SQUARE, 95, 42, 0.85, 0.07, 0.2);
+                tone(SINE, 60, 32, 1.1, 0.5, 0.2);
+                noise(0.9, 0.38, 650, 0.2);
+                noise(0.5, 0.18, 2200, 0.22);
+                double[] horn = {262, 392, 523, 784};
+                for (int i = 0; i < horn.length; i++) {
+                    double dl = 0.5 + i * 0.12;
+                    tone(SAW, horn[i], horn[i], 0.32, 0.055, dl);
+                    tone(TRIANGLE, horn[i], horn[i], 0.32, 0.12, dl);
+                    tone(SQUARE, horn[i] * 0.5, horn[i] * 0.5, 0.28, 0.025, dl);
+                }
+                break;
+            }
+            case Snd.DRAGONFLAP:
+                // 巨大翅膀扇一下：很低的“呼——”
+                noise(0.24, 0.26, 360, 0);
+                tone(SINE, 85, 42, 0.24, 0.16, 0);
+                break;
+            case Snd.FIREBALL:
+                noise(0.16, 0.12, 2400, 0);
+                tone(SAW, 320, 110, 0.14, 0.04, 0);
+                break;
+            case Snd.BOOM:
+                tone(SINE, 130, 34, 0.55, 0.42, 0);
+                noise(0.45, 0.34, 1300, 0);
+                tone(SQUARE, 170, 48, 0.25, 0.06, 0);
+                break;
             case Snd.CLICK:
                 tone(TRIANGLE, 600, 600, 0.05, 0.12, 0);
                 break;
