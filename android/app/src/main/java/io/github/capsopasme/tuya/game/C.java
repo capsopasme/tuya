@@ -32,6 +32,17 @@ public final class C {
     public static final double DARK_T = 5.0;
     public static final double DARK_VX = 1.35;
     public static final double DARK_SPIN = 15; // 旋转角速度（弧度/秒）
+    public static final double DRAGON_V = 2350; // 变身飞龙：新的终极道具，比紫黑飞翼再快两成多、飞得久得多（约 8000 分）
+    public static final double DRAGON_T = 7.4;
+    public static final double DRAGON_VX = 1.5;
+    public static final double DRAGON_SHIELD_T = 2.4; // 变回小海星后的火焰护盾
+    public static final double DRAGON_BREATH_CD = 0.11; // 龙息火球的间隔
+    public static final double DRAGON_CAM_FRAC = 0.42; // 飞龙时镜头把它放得更靠下，前方看得更远
+    public static final double DRAGON_CAM_K = 40;
+    public static final double REVIVE_V = 1500; // 生命果实复活：从屏幕底下被弹回来的速度
+    public static final double REVIVE_SHIELD_T = 2.6;
+    public static final int MAX_LIVES = 9;
+    public static final double LUCK_DIST = 2500; // 幸运果实：接下来这么多分的距离内爆率改变
     public static final double GLIDE_T = 2.4; // 道具用完后的“慢落”：下落阶段最多持续这么久
     public static final double GLIDE_G = 0.4; // 慢落时的重力倍数
     public static final double GLIDE_FALL = 470; // 慢落时的最大下落速度
@@ -52,6 +63,9 @@ public final class C {
     public static final double CAM_FRAC = 0.45; // 小海星最高只会到屏幕 45% 的位置，再往上就卷动
 
     // 畅快模式：每种道具 {出现所需分数, 每块可放道具的平台上出现的概率}
+    public static final double[] CHILL_DRAGON = {3500, 0.006};
+    public static final double[] CHILL_LIFE = {600, 0.007};
+    public static final double[] CHILL_LUCK = {400, 0.008};
     public static final double[] CHILL_DARK = {2500, 0.008};
     public static final double[] CHILL_WINGS = {1500, 0.012};
     public static final double[] CHILL_JET = {600, 0.026};

@@ -4,12 +4,14 @@ package io.github.capsopasme.tuya.game;
 public final class Hero {
     // 状态
     public static final int NORMAL = 0, PROPELLER = 1, JETPACK = 2, WINGS = 3, DARKWINGS = 4,
-            DEAD = 5, BLACKHOLE = 6, ABDUCTED = 7, FELL = 8, GONE = 9;
+            DEAD = 5, BLACKHOLE = 6, ABDUCTED = 7, FELL = 8, GONE = 9, DRAGON = 10;
     // 慢落的颜色
-    public static final int GL_GOLD = 0, GL_DARK = 1, GL_SKY = 2, GL_FIRE = 3;
+    public static final int GL_GOLD = 0, GL_DARK = 1, GL_SKY = 2, GL_FIRE = 3, GL_LIFE = 4;
+    // 护盾的颜色
+    public static final int SHIELD_GOLD = 0, SHIELD_DARK = 1, SHIELD_LIFE = 2, SHIELD_FIRE = 3;
 
     public static boolean flying(int st) {
-        return st >= PROPELLER && st <= DARKWINGS;
+        return (st >= PROPELLER && st <= DARKWINGS) || st == DRAGON;
     }
 
     public static boolean winged(int st) {
@@ -23,7 +25,7 @@ public final class Hero {
     public double belly, bellyV, b2, b2V; // 肚子 / 肚皮两层弹簧
     public double look, armPose, stretch, spin, scale = 1;
     public double shield;
-    public boolean shieldDark;
+    public int shieldKind;
     public double lean, leanV, leanAir = 1, roll, rollV;
     public int spinDir = 1;
     public double axis, glide, glideK, fallK;
@@ -35,7 +37,7 @@ public final class Hero {
         facing = o.facing; state = o.state; stateT = o.stateT; bounceT = o.bounceT; shootT = o.shootT;
         shootCd = o.shootCd; aim = o.aim; belly = o.belly; bellyV = o.bellyV; b2 = o.b2; b2V = o.b2V;
         look = o.look; armPose = o.armPose; stretch = o.stretch; spin = o.spin; scale = o.scale;
-        shield = o.shield; shieldDark = o.shieldDark; lean = o.lean; leanV = o.leanV; leanAir = o.leanAir;
+        shield = o.shield; shieldKind = o.shieldKind; lean = o.lean; leanV = o.leanV; leanAir = o.leanAir;
         roll = o.roll; rollV = o.rollV; spinDir = o.spinDir; axis = o.axis; glide = o.glide;
         glideK = o.glideK; fallK = o.fallK; glideCol = o.glideCol; sx = o.sx; sy = o.sy; tx = o.tx; ty = o.ty; t = o.t;
     }

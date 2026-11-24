@@ -114,6 +114,18 @@ public final class Scene {
             Art.wingItem(pen, it.type == Entities.I_DARK, x, y, t);
             return;
         }
+        if (it.type == Entities.I_LIFE) {
+            Art.lifeItem(pen, x, y, t);
+            return;
+        }
+        if (it.type == Entities.I_LUCK) {
+            Art.luckItem(pen, x, y, t);
+            return;
+        }
+        if (it.type == Entities.I_DRAGON) {
+            Art.potionItem(pen, x, y, t);
+            return;
+        }
         if (!it.fired) {
             float bob = it.type == Entities.I_PROP ? (float) Math.sin(platX * 0.05f + t * 3) * 1.2f : 0;
             pen.bmp.setAlpha(Pen.clamp255(pen.ga));
@@ -139,7 +151,7 @@ public final class Scene {
         heroAt(d, x, y);
         if (d.state != Hero.BLACKHOLE && d.state != Hero.ABDUCTED) {
             // 走到屏幕边缘时另一侧也画一份（飞翼张开时翅膀很宽，边距跟着放大）
-            float edge = (Hero.winged(d.state) ? 84 : 52) * HeroArt.HS;
+            float edge = d.state == Hero.DRAGON ? DragonArt.EDGE : (Hero.winged(d.state) ? 84 : 52) * HeroArt.HS;
             if (x < edge) heroAt(d, x + v.W, y);
             else if (x > v.W - edge) heroAt(d, x - v.W, y);
         }
@@ -263,7 +275,29 @@ public final class Scene {
                 case Fx.PART: {
                     float sz = (float) f.r * (0.55f + 0.45f * al);
                     p.ga = Math.min(1, al * 2.2f);
-                    if (f.shape == Fx.S_STAR) {
+                    if (f.shape == Fx.S_HEART || f.shape == Fx.S_LEAF || f.shape == Fx.S_SHARD) {
+                        c.save();
+                        c.translate(fx, fy);
+                        c.rotate(deg((float) f.rot));
+                        Path path = p.begin();
+                        if (f.shape == Fx.S_SHARD) {
+                            path.moveTo(0, -sz * 1.6f);
+                            path.lineTo(sz * 0.8f, sz * 0.4f);
+                            path.lineTo(-sz * 0.5f, sz * 1.1f);
+                            path.close();
+                            p.fill(path, Pen.rgba(f.col, 0.8f));
+                            p.stroke(path, 0xcc2d2d26, 1);
+                        } else if (f.shape == Fx.S_HEART) {
+                            Art.heart(path, 0, 0, sz * 1.25f);
+                            p.fillInk(path, 0xff000000 | f.col, 1.2f);
+                        } else {
+                            Art.heart(path, 0, 0, sz);
+                            path.moveTo(0, sz);
+                            path.lineTo(0, sz * 1.8f);
+                            p.fillInk(path, 0xff000000 | f.col, 1.1f);
+                        }
+                        c.restore();
+                    } else if (f.shape == Fx.S_STAR) {
                         c.save();
                         c.translate(fx, fy);
                         c.rotate(deg((float) f.rot));
@@ -310,15 +344,17 @@ public final class Scene {
     void speedLines(Hero d, float x, float y) {
         float k = clamp(((float) -d.vy - 650) / 450, 0, 1);
         if (k <= 0 || d.state == Hero.DEAD) return;
+        boolean dragon = d.state == Hero.DRAGON;
         boolean dark = d.state == Hero.DARKWINGS;
         boolean wings = dark || d.state == Hero.WINGS;
-        double t = clock * (dark ? 2100 : wings ? 1600 : 1100);
-        int n = dark ? 13 : wings ? 11 : 7;
-        float span = wings ? 12 : 13 * HeroArt.HS;
-        int col = dark ? 0x8c46e6 : wings ? 0xc89628 : 0x466e6e;
+        double t = clock * (dragon ? 2600 : dark ? 2100 : wings ? 1600 : 1100);
+        int n = dragon ? 19 : dark ? 13 : wings ? 11 : 7;
+        float span = dragon ? 15 : wings ? 12 : 13 * HeroArt.HS;
+        int col = dragon ? 0xff5a1e : dark ? 0x8c46e6 : wings ? 0xc89628 : 0x466e6e;
+        if (dragon) y += 20;
         for (int i = 0; i < n; i++) {
             float lx = x + (i - (n - 1) / 2f) * span + (float) Math.sin(i * 12.9) * 4;
-            float len = (dark ? 52 : wings ? 40 : 26) + ((i * 37) % 22);
+            float len = (dragon ? 70 : dark ? 52 : wings ? 40 : 26) + ((i * 37) % 22);
             float off = (float) ((t + i * 53) % 70);
             pen.line(lx, y + 4 + off, lx, y + 4 + off + len, Pen.rgba(col, 0.32f * k * (1 - off / 70)), 2);
         }
@@ -330,7 +366,8 @@ public final class Scene {
     private int bestShown = -1;
     private String bestS = "";
 
-    public void hud(Canvas c, int score, boolean chill) {
+    public void hud(Canvas c, int score, Game g) {
+        boolean chill = g.chill;
         Pen p = pen;
         float bh = 34;
         p.rectFill(0, 0, v.W, bh, 0xa8bee1e8);
@@ -340,6 +377,9 @@ public final class Scene {
             hudScoreS = Integer.toString(score);
         }
         p.text(hudScoreS, 12, bh / 2 + 1, 24, 0xff3d3d34, Paint.Align.LEFT, Pen.BOLD);
+        float hx = 12 + p.measure(hudScoreS, 24, Pen.BOLD) + 14;
+        hx = hudLives(c, g, hx, bh / 2);
+        hudLuck(c, g, hx, bh / 2);
         if (chill) {
             float tw = p.measure("畅快", 13, Pen.BOLD) + 12;
             float tx = v.W - 48 - tw;
@@ -350,6 +390,112 @@ public final class Scene {
         float px = v.W - 24, py = bh / 2;
         p.rr(px - 8, py - 9, 5.5f, 18, 2, 0xff3d3d34);
         p.rr(px + 2.5f, py - 9, 5.5f, 18, 2, 0xff3d3d34);
+    }
+
+    private String livesS = "";
+    private int livesShown = -1;
+
+    /** 生命果实：最多画 3 个小心形，再多就写 ×N；拿到 / 用掉时心形会蹦一下 */
+    float hudLives(Canvas c, Game g, float x, float cy) {
+        Pen p = pen;
+        int n = g.lives;
+        float pop = (float) Math.min(g.lifeT, g.reviveT);
+        float k = pop < 0.35f ? 1 + 0.5f * (float) Math.sin(pop / 0.35f * Math.PI) : 1;
+        if (n <= 0) {
+            // 刚用掉最后一次：一颗心碎掉淡出
+            if (g.reviveT < 0.6) {
+                p.ga = 1 - (float) g.reviveT / 0.6f;
+                c.save();
+                c.translate(x + 8, cy - (float) g.reviveT * 20);
+                c.scale(1 + (float) g.reviveT, 1 + (float) g.reviveT);
+                Art.lifeIcon(p, 0, 0, 7.5f);
+                c.restore();
+                p.ga = 1;
+                return x + 22;
+            }
+            return x;
+        }
+        int show = Math.min(n, 3);
+        for (int i = 0; i < show; i++) {
+            float s = i == show - 1 ? k : 1;
+            c.save();
+            c.translate(x + 8 + i * 18, cy + 1);
+            c.scale(s, s);
+            Art.lifeIcon(p, 0, 0, 7.5f);
+            c.restore();
+        }
+        x += show * 18 + 2;
+        if (n > 3) {
+            if (n != livesShown) {
+                livesShown = n;
+                livesS = "×" + n;
+            }
+            p.text(livesS, x, cy + 1, 15, 0xffd8385e, Paint.Align.LEFT, Pen.BOLD);
+            x += p.measure(livesS, 15, Pen.BOLD) + 4;
+        }
+        return x + 6;
+    }
+
+    /** 幸运果实：转着的四叶草 + 剩余距离的进度条 */
+    void hudLuck(Canvas c, Game g, float x, float cy) {
+        Pen p = pen;
+        float left = (float) g.luckLeft();
+        float fade = g.luck ? 1 : Math.max(0, 1 - (float) g.luckT / 0.4f);
+        if (fade <= 0) return;
+        p.ga = fade;
+        float pop = (float) g.luckT;
+        float k = g.luck && pop < 0.4f ? 1 + 0.6f * (float) Math.sin(pop / 0.4f * Math.PI) : 1;
+        c.save();
+        c.translate(x + 9, cy + 1);
+        c.scale(k, k);
+        Art.luckIcon(p, 0, 0, 17, (float) clock * 1.5f);
+        c.restore();
+        float bw = 40, bx = x + 21;
+        p.rr(bx, cy - 3, bw, 6, 3, 0x66ffffff);
+        if (left > 0) p.rr(bx, cy - 3, Math.max(6, bw * left), 6, 3, left < 0.2f && ((int) (clock * 6)) % 2 == 0 ? 0xffffe27a : 0xff5fc43a);
+        p.rrStroke(bx, cy - 3, bw, 6, 3, 0xcc3d6a28, 1.2f);
+        p.ga = 1;
+    }
+
+    /** 龙息火球：外焰 + 内焰 + 白芯，拖着一道火痕 */
+    void fireball(float x, float y, float vx, float vy) {
+        Pen p = pen;
+        float v = (float) Math.hypot(vx, vy);
+        float dx = v > 0 ? -vx / v : 0, dy = v > 0 ? -vy / v : 1;
+        p.line(x, y, x + dx * 26, y + dy * 26, 0x99ff6a2a, 9);
+        p.line(x, y, x + dx * 16, y + dy * 16, 0xccffc23a, 5);
+        RadialGradient gl = Grad.glow(0xff7a2a);
+        Grad.place(gl, x, y, 16, 16);
+        p.circleShader(x, y, 16, gl, 0.8f);
+        p.circle(x, y, 7, 0xffff6a2a);
+        p.circle(x, y, 4.6f, 0xffffd04a);
+        p.circle(x, y, 2.4f, 0xfffff8e0);
+    }
+
+    private LinearGradient heatL, heatR, heatB;
+
+    /** 飞龙时屏幕两侧和底部烧起来的热浪边 */
+    void heat(Canvas c, float st, float left) {
+        Pen p = pen;
+        float k = Math.min(1, st / 0.3f) * Math.min(1, Math.max(0, left) / 0.6f);
+        if (k <= 0) return;
+        float a = k * (0.75f + 0.25f * (float) Math.sin(clock * 9));
+        float w = 34;
+        if (heatL == null) {
+            heatL = Grad.linear(0, 0, 1, 0, 0x99ff4a1e, 0x00ff4a1e);
+            heatR = Grad.linear(0, 0, -1, 0, 0x99ff4a1e, 0x00ff4a1e);
+            heatB = Grad.linear(0, 0, 0, -1, 0x80ff6a1e, 0x00ff6a1e);
+        }
+        Grad.place(heatL, v.x0, 0, w, 1);
+        p.shade.setShader(heatL);
+        p.shade.setAlpha(Pen.clamp255(a));
+        c.drawRect(v.x0, v.y0, v.x0 + w, v.y1, p.shade);
+        Grad.place(heatR, v.x1, 0, w, 1);
+        p.shade.setShader(heatR);
+        c.drawRect(v.x1 - w, v.y0, v.x1, v.y1, p.shade);
+        Grad.place(heatB, 0, v.y1, 1, 60);
+        p.shade.setShader(heatB);
+        c.drawRect(v.x0, v.y1 - 60, v.x1, v.y1, p.shade);
     }
 
     // ---------- 整个场景 ----------
@@ -419,7 +565,9 @@ public final class Scene {
         }
         for (int i = 0, n = g.bullets.size(); i < n; i++) {
             Bullet b = g.bullets.get(i);
-            p.circleInk(ix(b.px, b.x, a), ix(b.py, b.y, a), 4.6f, 0xfffffdf0, 1.7f);
+            float bx = ix(b.px, b.x, a), by = ix(b.py, b.y, a);
+            if (b.fire) fireball(bx, by, (float) b.vx, (float) b.vy);
+            else p.circleInk(bx, by, 4.6f, 0xfffffdf0, 1.7f);
         }
         for (int i = 0, n = g.sparks.size(); i < n; i++) {
             Spark s = g.sparks.get(i);
@@ -433,9 +581,10 @@ public final class Scene {
         doodler(d, a);
         effects(c, g.fx, true);
         c.restore();
+        if (d.state == Hero.DRAGON) heat(c, (float) d.stateT, (float) (C.DRAGON_T - d.stateT));
         if (!frozen && g.flash > 0.004) p.rectFill(v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0, Pen.rgba(g.flashCol, clamp((float) g.flash, 0, 1)));
         letterbox(c);
-        hud(c, shownScore, g.chill);
+        hud(c, shownScore, g);
         if (!frozen && perfText != null) perf(c, perfText);
         c.restore();
     }

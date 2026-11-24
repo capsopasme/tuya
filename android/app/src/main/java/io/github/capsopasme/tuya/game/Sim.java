@@ -18,9 +18,10 @@ import java.util.Locale;
  */
 public final class Sim {
     static final double DT = 1.0 / 120;
-    static final String[] STATES = {"normal", "propeller", "jetpack", "wings", "darkwings", "dead", "blackhole", "abducted", "fell", "gone"};
+    static final String[] STATES = {"normal", "propeller", "jetpack", "wings", "darkwings", "dead", "blackhole", "abducted", "fell", "gone", "dragon"};
     static final String[] SND = {"jump", "spring", "tramp", "break", "shoot", "hit", "mdie", "stomp", "pickup", "prop", "jet", "wings",
-            "darkwings", "darkflap", "flap", "smash", "fall", "hole", "abduct", "over", "click"};
+            "darkwings", "darkflap", "flap", "smash", "fall", "hole", "abduct", "over", "click",
+            "life", "revive", "luck", "dragon", "dragonflap", "fireball", "boom"};
 
     public static void main(String[] args) {
         if (args.length > 0 && args[0].equals("trace")) {
@@ -306,7 +307,7 @@ public final class Sim {
         if (!(wing.h > jet.h * 1.8)) fails.add("飞翼应该比喷气背包飞得高得多");
         if (dark.st != Hero.DARKWINGS) fails.add("拿到紫黑飞翼后没有进入 darkwings 状态");
         if (!(dark.h > wing.h * 1.2)) fails.add("紫黑飞翼应该比白色飞翼飞得更高");
-        if (!dark.g.dd.shieldDark) fails.add("紫黑飞翼结束后的护盾不是紫色的");
+        if (dark.g.dd.shieldKind != Hero.SHIELD_DARK) fails.add("紫黑飞翼结束后的护盾不是紫色的");
         if (!(jet.g.dd.glide > 0 || jet.g.dd.glideK > 0)) fails.add("喷气背包用完后没有进入慢落");
 
         g = bare(8);
@@ -394,8 +395,131 @@ public final class Sim {
         for (int i = 0; i < 5; i++) g.update(DT, 0);
         if (g.dd.state != Hero.DEAD) fails.add("护盾结束后撞到怪物应该会死");
 
+        newItems(fails, dark);
+
         Run a = run(5, true, false, 60), a2 = run(5, true, false, 60);
         if (a.score != a2.score) fails.add("同一种子两次结果不同");
+    }
+
+    /** 生命果实 / 幸运果实 / 变身药剂 */
+    static void newItems(List<String> fails, Fly dark) {
+        // 变身药剂：约 8000 分（16000px），明显超过紫黑飞翼
+        Fly dr = flyHeight(I_DRAGON);
+        System.out.printf(Locale.ROOT, "变身飞龙飞行高度 %.0f px（约 %.0f 分）%n", dr.h, dr.h / 2);
+        if (dr.st != Hero.DRAGON) fails.add("拿到变身药剂后没有变成飞龙");
+        if (!(dr.h > 14500 && dr.h < 18500)) fails.add("飞龙应该飞 8000 分左右，实际 " + dr.h / 2);
+        if (!(dr.h > dark.h * 1.5)) fails.add("飞龙应该比紫黑飞翼飞得高得多");
+        if (dr.g.dd.shieldKind != Hero.SHIELD_FIRE) fails.add("飞龙结束后应该是火焰护盾");
+
+        // 变身瞬间的龙吼：屏幕里的怪物和黑洞全部炸掉
+        Game g = bare(20);
+        g.dd.x = 160;
+        g.dd.y = 400;
+        Monster m1 = g.makeMonster(M_FLYER, 60, 120);
+        Monster m2 = g.makeMonster(M_UFO, 250, 500);
+        g.monsters.add(m1);
+        g.monsters.add(m2);
+        g.holes.add(new Hole(80, 300, 28));
+        g.debugGive(I_DRAGON);
+        if (!m1.dead || !m2.dead || !g.holes.isEmpty()) fails.add("变身时的龙吼没有清掉屏幕里的怪物 / 黑洞");
+        // 飞行中：前方的怪物被龙息火球或身体撞碎
+        int killed = 0, total = 0;
+        for (int i = 0; i < 300; i++) {
+            if (i % 20 == 0) {
+                Monster m = g.makeMonster(i % 40 == 0 ? M_BLOB : M_FLYER, 40 + (i * 37) % 240, g.dd.y - 420);
+                m.amp = 0;
+                g.monsters.add(m);
+                total++;
+            }
+            g.update(DT, 0);
+            g.nEvents = 0;
+            if (g.dd.state != Hero.DRAGON) fails.add("飞龙飞行中被打断了");
+            if (g.dd.state != Hero.DRAGON) break;
+        }
+        for (Monster m : g.monsters) if (m.dead) killed++;
+        killed += total - g.monsters.size();
+        if (killed < total - 1) fails.add("飞龙前方的怪物没有被清掉：" + killed + "/" + total);
+        boolean fired = false;
+        for (Bullet b : g.bullets) fired |= b.fire;
+        if (g.dd.y - g.camY < g.H * 0.2) fails.add("飞龙时镜头应该把它放低一点（看得到前方）");
+
+        // 生命果实：复活机会 +1；掉下去 / 撞怪 / 黑洞 / UFO 都能复活一次
+        g = bare(21);
+        Platform pl = g.addPlatform(P_NORMAL, 160, 450);
+        pl.item = new Item(I_LIFE, 0);
+        g.dd.x = 160;
+        g.dd.y = g.dd.prevY = 445;
+        g.dd.vy = 30;
+        for (int i = 0; i < 10; i++) g.update(DT, 0);
+        if (g.lives != 1) fails.add("捡到生命果实后复活机会应当为 1，实际 " + g.lives);
+        // 掉出屏幕
+        g.platforms.clear();
+        g.dd.state = Hero.NORMAL;
+        g.dd.y = g.camY + g.H - 10;
+        g.dd.vy = 600;
+        g.dd.glide = 0;
+        for (int i = 0; i < 120 && g.phase == Game.PLAY && g.lives > 0; i++) g.update(DT, 0);
+        if (g.lives != 0 || g.phase != Game.PLAY || g.dd.state != Hero.NORMAL || g.dd.vy > -800) fails.add("掉出屏幕时没有用生命果实复活");
+        if (g.dd.shield <= 0) fails.add("复活后应当有护盾");
+        for (int i = 0; i < 400 && g.phase != Game.OVER; i++) g.update(DT, 0);
+        if (g.phase != Game.OVER) fails.add("复活机会用完后再掉下去应当结束游戏");
+
+        int[] causes = {0, 1, 2};
+        String[] names = {"撞怪", "黑洞", "UFO"};
+        for (int c : causes) {
+            g = bare(30 + c);
+            g.lives = 1;
+            g.dd.x = 160;
+            g.dd.y = g.dd.prevY = 400;
+            g.dd.vy = -300;
+            if (c == 0) {
+                Monster m = g.makeMonster(M_BLOB, 160, 380);
+                m.amp = 0;
+                g.monsters.add(m);
+            } else if (c == 1) g.holes.add(new Hole(160, 380, 28));
+            else {
+                Monster m = g.makeMonster(M_UFO, 160, 300);
+                m.vx = 0;
+                g.monsters.add(m);
+            }
+            for (int i = 0; i < 6; i++) g.update(DT, 0);
+            if (g.lives != 0 || g.dd.state != Hero.NORMAL) fails.add(names[c] + "时没有用生命果实复活");
+            for (int i = 0; i < 30; i++) g.update(DT, 0);
+            if (g.dd.state != Hero.NORMAL) fails.add(names[c] + "复活后又马上死了");
+        }
+
+        // 幸运果实：同样的随机序列下，生效时基础道具更少、传说道具更多
+        int[] normal = itemCounts(false), lucky = itemCounts(true);
+        int legN = normal[I_WINGS] + normal[I_DARK] + normal[I_DRAGON], legL = lucky[I_WINGS] + lucky[I_DARK] + lucky[I_DRAGON];
+        int basN = normal[I_SPRING] + normal[I_TRAMP] + normal[I_PROP], basL = lucky[I_SPRING] + lucky[I_TRAMP] + lucky[I_PROP];
+        System.out.printf(Locale.ROOT, "幸运果实：传说道具 %d -> %d，基础道具 %d -> %d，飞龙 %d -> %d%n", legN, legL, basN, basL, normal[I_DRAGON], lucky[I_DRAGON]);
+        if (!(legL > legN * 3)) fails.add("幸运果实没有明显提高传说道具爆率");
+        if (!(basL < basN * 0.5)) fails.add("幸运果实没有明显降低基础道具爆率");
+        g = bare(40);
+        g.dd.x = 160;
+        g.dd.y = 400;
+        g.debugGive(I_LUCK);
+        if (!g.luck || !g.luckAt(g.dd.y - 100) || g.luckAt(g.dd.y - C.LUCK_DIST * 2 - 50)) fails.add("幸运果实的生效距离不对");
+        g.dd.y -= C.LUCK_DIST * 2 + 60;
+        g.update(DT, 0);
+        if (g.luck) fails.add("走完这段距离后幸运果实应当失效");
+    }
+
+    /** 3000..12000 分之间生成的道具数量（lucky = 整段都在幸运果实生效中） */
+    static int[] itemCounts(boolean lucky) {
+        int[] n = new int[16];
+        for (int seed = 1; seed <= 30; seed++) {
+            Game g = new Game(new Rng(seed * 104729));
+            g.H = 560;
+            g.reset();
+            while (g.scoreAtY(g.topY) < 3000) g.genRow();
+            g.platforms.clear();
+            g.luck = lucky;
+            g.luckEndY = -1e9;
+            while (g.scoreAtY(g.topY) < 12000) g.genRow();
+            for (Platform p : g.platforms) if (p.item != null) n[p.item.type]++;
+        }
+        return n;
     }
 
     static double fall(boolean glide) {

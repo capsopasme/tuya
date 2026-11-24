@@ -40,8 +40,11 @@ public final class HeroArt {
     Hero3D h3; // 3D 主角（不支持时为 null）
     public boolean use3d = true;
 
+    final DragonArt dragon;
+
     HeroArt(Pen p) {
         this.p = p;
+        dragon = new DragonArt(p);
     }
 
     static void geom(Hero d, Geom g) {
@@ -164,6 +167,7 @@ public final class HeroArt {
     final Matrix ghostM = new Matrix();
 
     void ghost(Hero d, float x, float y, float alpha, int col) {
+        if (d.state == Hero.DRAGON) return;
         Canvas c = p.c;
         c.save();
         c.translate(x, y);
@@ -181,7 +185,10 @@ public final class HeroArt {
     }
 
     // ---------- 飞翼：两只大翅膀长在背后 ----------
-    private RadialGradient wingGlowGold, wingGlowDark, shieldGold, shieldDark;
+    private RadialGradient wingGlowGold, wingGlowDark;
+    private final RadialGradient[] shieldGrad = new RadialGradient[4];
+    private static final int[] SHIELD_EDGE = {0x73ffe278, 0x73a050ff, 0x80ff6e96, 0x80ff6a2a};
+    private static final int[] SHIELD_DASH = {0xe6f0be32, 0xf2be82ff, 0xf2ff7aa0, 0xf2ffb04a};
     private static final DashPathEffect DASH_RING = new DashPathEffect(new float[]{5, 7}, 0);
     private static final DashPathEffect DASH_SHIELD = new DashPathEffect(new float[]{7, 5}, 0);
 
@@ -274,16 +281,14 @@ public final class HeroArt {
         float fade = clamp((float) d.shield / 0.4f, 0, 1);
         float blink = d.shield < 0.6 ? 0.5f + 0.5f * (float) Math.sin(t * 40) : 0.75f + 0.25f * (float) Math.sin(t * 10);
         float r = 36 + (float) Math.sin(t * 8) * 1.5f;
-        boolean dark = d.shieldDark;
+        int kind = Math.max(0, Math.min(3, d.shieldKind));
         float ga0 = p.ga;
         p.ga = ga0 * fade * blink;
-        RadialGradient gr;
-        if (dark) {
-            if (shieldDark == null) shieldDark = Grad.radial(0, 0, 1, new int[]{0x00aa5aff, 0x73a050ff}, new float[]{0.55f, 1});
-            gr = shieldDark;
-        } else {
-            if (shieldGold == null) shieldGold = Grad.radial(0, 0, 1, new int[]{0x00ffec96, 0x73ffe278}, new float[]{0.55f, 1});
-            gr = shieldGold;
+        RadialGradient gr = shieldGrad[kind];
+        if (gr == null) {
+            int e = SHIELD_EDGE[kind];
+            gr = Grad.radial(0, 0, 1, new int[]{e & 0x00ffffff, e}, new float[]{0.55f, 1});
+            shieldGrad[kind] = gr;
         }
         Grad.place(gr, 0, g.by, r, r);
         p.circleShader(0, g.by, r, gr, 1);
@@ -291,7 +296,7 @@ public final class HeroArt {
         c.save();
         c.rotate(deg(t * 30 / r), 0, g.by);
         p.stroke.setPathEffect(DASH_SHIELD);
-        p.circleStroke(0, g.by, r, dark ? 0xf2be82ff : 0xe6f0be32, 2.4f);
+        p.circleStroke(0, g.by, r, SHIELD_DASH[kind], 2.4f);
         p.stroke.setPathEffect(null);
         c.restore();
         p.ga = ga0;
@@ -381,6 +386,10 @@ public final class HeroArt {
     void drawAt(Hero d, float x, float y, float viewScale) {
         Canvas c = p.c;
         int st = d.state;
+        if (st == Hero.DRAGON) {
+            dragon.draw(d, x, y);
+            return;
+        }
         c.save();
         c.translate(x, y);
         c.scale(HS, HS);

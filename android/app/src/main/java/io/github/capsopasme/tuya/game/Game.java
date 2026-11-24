@@ -48,6 +48,14 @@ public final class Game {
     double lastHazardY, lastX;
     public final Hero dd = new Hero();
 
+    // 生命果实：剩余的复活机会；reviveT / lifeT 是 HUD 上的动画计时
+    public int lives;
+    public double reviveT = 99, lifeT = 99;
+    // 幸运果实：生效时，高度在 luckEndY 以下（y 更大）的新关卡行里基础道具变少、传说道具变多
+    public boolean luck;
+    public double luckEndY, luckT = 99;
+    double breathCd, roarCd;
+
     // 射击队列（点击屏幕时加入，下一步物理里处理）
     private final double[] shotX = new double[16], shotY = new double[16];
     private final boolean[] shotT = new boolean[16];
@@ -106,6 +114,11 @@ public final class Game {
         flash = 0;
         flashCol = 0xffffff;
         ghostT = ghostCd = trailT = whirT = 0;
+        lives = 0;
+        reviveT = lifeT = luckT = 99;
+        luck = false;
+        luckEndY = 0;
+        breathCd = roarCd = 0;
         double baseY = H - 56;
         startY = baseY;
         topY = baseY;
@@ -228,29 +241,53 @@ public final class Game {
         // 道具
         if (type == P_NORMAL || type == P_MOVING) {
             double r2 = rng.next();
-            double pd, pw, pj, pp, pt, ps;
+            double pdr, pd, pw, pl, pk, pj, pp, pt, ps;
+            boolean lucky = luckAt(y);
+            // 幸运果实：传说道具（飞龙、紫黑飞翼、飞翼）出现的门槛减半、概率翻好几倍，基础道具大幅减少
+            double th = lucky ? 0.5 : 1;
             if (chill) {
-                pd = sc > C.CHILL_DARK[0] ? C.CHILL_DARK[1] : 0;
-                pw = sc > C.CHILL_WINGS[0] ? C.CHILL_WINGS[1] : 0;
+                pdr = sc > C.CHILL_DRAGON[0] * th ? C.CHILL_DRAGON[1] : 0;
+                pl = sc > C.CHILL_LIFE[0] * th ? C.CHILL_LIFE[1] : 0;
+                pk = sc > C.CHILL_LUCK[0] ? C.CHILL_LUCK[1] : 0;
+                pd = sc > C.CHILL_DARK[0] * th ? C.CHILL_DARK[1] : 0;
+                pw = sc > C.CHILL_WINGS[0] * th ? C.CHILL_WINGS[1] : 0;
                 pj = sc > C.CHILL_JET[0] ? C.CHILL_JET[1] : 0;
                 pp = sc > C.CHILL_PROP[0] ? C.CHILL_PROP[1] : 0;
                 pt = sc > C.CHILL_TRAMP[0] ? C.CHILL_TRAMP[1] : 0;
                 ps = sc > C.CHILL_SPRING[0] ? C.CHILL_SPRING[1] : 0;
             } else {
-                pd = sc > 5000 ? 0.0025 : 0; // 紫黑飞翼：5000 分以后才会出现
-                pw = sc > 3500 ? 0.0035 : 0; // 飞翼：3500 分以后才会出现
+                pdr = sc > 7000 * th ? 0.0016 : 0; // 变身药剂：7000 分以后才会出现，最稀有
+                pl = sc > 1500 * th ? 0.0018 : 0; // 生命果实
+                pk = sc > 600 ? 0.0028 : 0; // 幸运果实
+                pd = sc > 5000 * th ? 0.0025 : 0; // 紫黑飞翼：5000 分以后才会出现
+                pw = sc > 3500 * th ? 0.0035 : 0; // 飞翼：3500 分以后才会出现
                 pj = sc > 2500 ? 0.006 : 0;
                 pp = sc > 1200 ? 0.012 : 0;
                 pt = sc > 700 ? 0.016 : 0;
                 ps = 0.06;
             }
+            if (lucky) {
+                pdr *= 6;
+                pd *= 5;
+                pw *= 5;
+                pl *= 3;
+                pk = 0;
+                pj *= 1.6;
+                pp *= 0.3;
+                pt *= 0.3;
+                ps *= 0.3;
+            }
             int it = -1;
-            if (r2 < pd) it = I_DARK;
-            else if (r2 < pd + pw) it = I_WINGS;
-            else if (r2 < pd + pw + pj) it = I_JET;
-            else if (r2 < pd + pw + pj + pp) it = I_PROP;
-            else if (r2 < pd + pw + pj + pp + pt) it = I_TRAMP;
-            else if (r2 < pd + pw + pj + pp + pt + ps) it = I_SPRING;
+            double acc = 0;
+            if (r2 < (acc += pdr)) it = I_DRAGON;
+            else if (r2 < (acc += pd)) it = I_DARK;
+            else if (r2 < (acc += pw)) it = I_WINGS;
+            else if (r2 < (acc += pl)) it = I_LIFE;
+            else if (r2 < (acc += pk)) it = I_LUCK;
+            else if (r2 < (acc += pj)) it = I_JET;
+            else if (r2 < (acc += pp)) it = I_PROP;
+            else if (r2 < (acc += pt)) it = I_TRAMP;
+            else if (r2 < acc + ps) it = I_SPRING;
             if (it >= 0) {
                 double lim = half - ITEM_SIZE[it][0] / 2 - 2;
                 p.item = new Item(it, rand(-lim, lim));
@@ -270,6 +307,17 @@ public final class Game {
             }
         }
         lastX = x;
+    }
+
+    /** 这一行（世界坐标 y）生成时幸运果实是否生效 */
+    public boolean luckAt(double y) {
+        return luck && y > luckEndY;
+    }
+
+    /** 幸运果实剩余的比例（HUD 进度条用），没有生效时为 0 */
+    public double luckLeft() {
+        if (!luck) return 0;
+        return clamp((dd.y - luckEndY) / (C.LUCK_DIST * 2), 0, 1);
     }
 
     // ---------- 主循环 ----------
@@ -323,6 +371,13 @@ public final class Game {
         double lookT = d.shootT < 0.35 ? Math.signum(Math.cos(d.aim)) * 0.9 : clamp(d.vx / 140, -1, 1);
         d.look += (lookT - d.look) * ease(12, dt);
         if (d.shield > 0) d.shield = Math.max(0, d.shield - dt);
+        reviveT += dt;
+        lifeT += dt;
+        luckT += dt;
+        if (luck && d.y < luckEndY) {
+            luck = false;
+            luckT = 0;
+        }
         int st = d.state;
         boolean fly = flying(st);
         double axis = clamp(axisIn, -1, 1);
@@ -331,7 +386,7 @@ public final class Game {
 
         // 水平方向
         if (st == NORMAL || fly) {
-            double vk = st == WINGS ? C.WING_VX : st == DARKWINGS ? C.DARK_VX : 1;
+            double vk = st == WINGS ? C.WING_VX : st == DARKWINGS ? C.DARK_VX : st == DRAGON ? C.DRAGON_VX : 1;
             double target = axis * C.MAX_VX * vk;
             double a = C.ACCEL * vk * dt;
             d.vx += clamp(target - d.vx, -a, a);
@@ -359,31 +414,38 @@ public final class Game {
             d.fallK = d.glideK = d.glide = 0;
             boolean prop = st == PROPELLER;
             boolean dark = st == DARKWINGS;
+            boolean dragon = st == DRAGON;
             boolean wings = winged(st);
-            double T = prop ? C.PROP_T : dark ? C.DARK_T : wings ? C.WING_T : C.JET_T;
-            double V = prop ? C.PROP_V : dark ? C.DARK_V : wings ? C.WING_V : C.JET_V;
-            double ramp = wings ? 1 : 0.7; // 最后这段时间慢慢减速
+            double T = prop ? C.PROP_T : dragon ? C.DRAGON_T : dark ? C.DARK_T : wings ? C.WING_T : C.JET_T;
+            double V = prop ? C.PROP_V : dragon ? C.DRAGON_V : dark ? C.DARK_V : wings ? C.WING_V : C.JET_V;
+            double ramp = wings || dragon ? 1 : 0.7; // 最后这段时间慢慢减速
             double left = T - d.stateT;
             double tv = -(left > ramp ? V : lerp(250, V, Math.max(0, left) / ramp));
-            double acc = dark ? 4600 : wings ? 3600 : 2600;
+            double acc = dragon ? 5600 : dark ? 4600 : wings ? 3600 : 2600;
             d.vy += clamp(tv - d.vy, -acc * dt, acc * dt);
             d.y += d.vy * dt;
             whirT -= dt;
             if (whirT <= 0) {
-                whirT = dark ? 0.17 : wings ? 0.2 : 0.16;
-                sfx(prop ? Snd.PROP : dark ? Snd.DARKFLAP : wings ? Snd.FLAP : Snd.JET);
+                whirT = dragon ? 0.26 : dark ? 0.17 : wings ? 0.2 : 0.16;
+                sfx(prop ? Snd.PROP : dragon ? Snd.DRAGONFLAP : dark ? Snd.DARKFLAP : wings ? Snd.FLAP : Snd.JET);
             }
-            if (wings) {
-                ghostT = Math.max(ghostT, 0.05);
-                smash();
-            }
+            if (wings) ghostT = Math.max(ghostT, 0.05);
+            if (wings || dragon) smash();
+            if (dragon) dragonBreath(dt, left);
             if (left <= 0) {
                 d.state = NORMAL;
                 d.stateT = 0;
-                if (wings) {
+                if (dragon) {
+                    // 变回小海星：最后一声龙吼把屏幕里的怪物全部震碎，再给一段火焰护盾
+                    d.shield = C.DRAGON_SHIELD_T;
+                    d.shieldKind = SHIELD_FIRE;
+                    bounce(C.JUMP_V * 1.3, 2);
+                    dragonEndFx();
+                    sfx(Snd.BOOM);
+                } else if (wings) {
                     // 收翅膀前最后用力扇一下，再给一小段护盾
                     d.shield = C.SHIELD_T;
-                    d.shieldDark = dark;
+                    d.shieldKind = dark ? SHIELD_DARK : SHIELD_GOLD;
                     bounce(C.JUMP_V * 1.15, 1.6);
                     if (dark) darkEndFx();
                     else wingEndFx();
@@ -418,16 +480,18 @@ public final class Game {
 
         trailFx(dt);
 
+        if (d.state == NORMAL || flying(d.state)) fruits();
         if (d.state == NORMAL) {
             pickups();
             if (d.state == NORMAL) hazards();
         }
 
-        // 相机只往上走，而且是缓动跟随，冲得太快时才硬拉住
+        // 相机只往上走，而且是缓动跟随，冲得太快时才硬拉住（飞龙时跟得更紧、把它放得更低，前方看得远）
         boolean alive = d.state == NORMAL || flying(d.state);
         if (alive) {
-            double target = d.y - H * C.CAM_FRAC;
-            if (target < camY) camY += (target - camY) * (1 - Math.exp(-C.CAM_K * dt));
+            boolean dr = d.state == DRAGON;
+            double target = d.y - H * (dr ? C.DRAGON_CAM_FRAC : C.CAM_FRAC);
+            if (target < camY) camY += (target - camY) * (1 - Math.exp(-(dr ? C.DRAGON_CAM_K : C.CAM_K) * dt));
             double topLimit = d.y - H * C.CAM_TOP;
             if (topLimit < camY) camY = topLimit;
             maxH = Math.max(maxH, startY - d.y);
@@ -435,8 +499,10 @@ public final class Game {
         }
         genUntil(camY - 220);
 
-        // 掉出屏幕底部
-        if ((d.state == NORMAL || d.state == DEAD) && d.y - camY > H + 60) {
+        // 掉出屏幕底部（有生命果实就从底下被弹回来）
+        if (d.state == NORMAL && lives > 0 && d.y - camY > H + 24) {
+            revive(null, null, true);
+        } else if ((d.state == NORMAL || d.state == DEAD) && d.y - camY > H + 60) {
             if (d.state == NORMAL) {
                 d.state = FELL;
                 sfx(Snd.FALL);
@@ -461,6 +527,7 @@ public final class Game {
                 airT = 0;
             }
             if (st == DARKWINGS) target *= 0.5;
+            else if (st == DRAGON) target *= 0.7;
             target += Math.sin(d.t * 2.6) * 0.16 * d.fallK;
         }
         d.leanV += (LEAN_K * (target - d.lean) - LEAN_C * d.leanV) * dt;
@@ -667,6 +734,7 @@ public final class Game {
     }
 
     void addGhost() {
+        if (dd.state == DRAGON) return;
         Fx f = newFx(Fx.GHOST);
         f.d.copyFrom(dd);
         f.x = dd.x;
@@ -701,6 +769,10 @@ public final class Game {
 
     /** 飞翼撞碎怪物 / 黑洞的瞬间 */
     void smashFx(double x, double y) {
+        if (dd.state == DRAGON) {
+            dragonBlastFx(x, y, 0);
+            return;
+        }
         if (dd.state == DARKWINGS) {
             shockwave(x, y, 480, 6, 0xaa5aff, 1, 0.38, 0);
             shockwave(x, y, 340, 2.5, 0x7df0ff, 1, 0.3, 0.04);
@@ -737,6 +809,39 @@ public final class Game {
 
     /** 道具被用上的那一瞬间：弹簧 / 蹦床在脚下 (x, y) 炸开；螺旋桨帽 / 喷气背包 / 飞翼在身上炸开 */
     void itemFx(int type, double x, double y) {
+        if (type == I_DRAGON) {
+            dragonStartFx(x, y);
+            return;
+        }
+        if (type == I_LIFE) {
+            int[] cols = {0xff5c8a, 0xff9ab8, 0xffffff, 0x8fe35a};
+            shockwave(x, y, 360, 5, 0xff6e96, 1, 0.42, 0);
+            shockwave(x, y, 260, 2.5, 0xffffff, 1, 0.36, 0.05);
+            glow(x, y, 70, 0xff8fb0, 0.3, 0);
+            rays(x, y, 12, 0, (TAU * 11) / 12, 80, 3.4, 0xff7aa0, 0.36, 0);
+            burst(x, y, 14, 0, -PI * 0.95, -PI * 0.05, 120, 340, 260, 1.6, 3.5, 6.5, 0.6, 1.0, 10, SH_HEART, cols);
+            popText(x, y - 46, "生命 +1", 26, 0xff6e96, 0, 0.9);
+            flash = Math.max(flash, 0.18);
+            flashCol = 0xffc0d4;
+            shake = Math.max(shake, 3);
+            return;
+        }
+        if (type == I_LUCK) {
+            int[] cols = {0x6fdc4a, 0xb6f783, 0xffe27a, 0xffffff, 0x7be0ff, 0xff8fd0};
+            shockwave(x, y, 420, 5, 0x5fd14a, 1, 0.46, 0);
+            shockwave(x, y, 320, 3, 0xffe27a, 1, 0.4, 0.05);
+            shockwave(x, y, 240, 2, 0xffffff, 1, 0.34, 0.1);
+            glow(x, y, 90, 0xd8ff9a, 0.34, 0);
+            spiral(x, y, 4, 90, 3, rnd() * TAU, 5, 0x6fdc4a, 0.55, 0);
+            rays(x, y, 16, 0, (TAU * 15) / 16, 110, 3.4, 0xffe27a, 0.42, 0);
+            burst(x, y, 12, 0, 0, TAU, 120, 380, 220, 1.5, 3.5, 6.5, 0.6, 1.1, 12, SH_LEAF, cols);
+            burst(x, y, 14, 0.04, 0, TAU, 140, 420, 220, 1.5, 3, 6, 0.6, 1.1, 12, SH_SSD, cols);
+            popText(x, y - 50, "好运!!", 30, 0x5fd14a, 0, 0.9);
+            flash = Math.max(flash, 0.22);
+            flashCol = 0xeaffc8;
+            shake = Math.max(shake, 4);
+            return;
+        }
         if (type == I_SPRING) {
             int[] cols = {0xffd93b, 0xfff6a8, 0xff7a5c, 0xffffff};
             shockwave(x, y - 2, 400, 5, 0xffec78, 0.3, 0.4, 0);
@@ -850,7 +955,11 @@ public final class Game {
             {0xc77dff, 0xff9ef5, 0xa0f6ff}, // dark
             {0x9fdcff, 0xffffff, 0xffe27a}, // sky
             {0xffd27a, 0xffffff, 0xffb37a}, // fire
+            {0xff8fb0, 0xffffff, 0xb6f783}, // life
     };
+    private static final int[] LUCK_COLS = {0x6fdc4a, 0xb6f783, 0xffe27a, 0xffffff};
+    private static final int[] SH_HEART = {Fx.S_HEART, Fx.S_HEART, Fx.S_STAR};
+    private static final int[] SH_LEAF = {Fx.S_LEAF};
     private static final int[] DARK_TRAIL = {0xc77dff, 0xff6ef0, 0x7df9ff, 0xffffff, 0x9d4edd};
     private static final int[] WING_TRAIL = {0xffe27a, 0xfff6c8, 0xffffff, 0xffb3e0};
 
@@ -864,6 +973,16 @@ public final class Game {
                 ghostCd = 0.034;
                 addGhost();
             }
+        }
+        if (fx.size() > 300) return;
+        if (luck && rnd() < 0.08 && d.state != DRAGON) {
+            // 幸运果实生效中：身边时不时冒出一片小四叶草 / 金星
+            part(rnd() < 0.5 ? Fx.S_LEAF : Fx.S_STAR, d.x + (rnd() - 0.5) * 34, d.y - CENTER + (rnd() - 0.5) * 30, (rnd() - 0.5) * 40,
+                    -30 - rnd() * 40, 40, 1.2, 2.4 + rnd() * 1.6, (rnd() - 0.5) * 8, LUCK_COLS[(int) (rnd() * LUCK_COLS.length)], 0.7 + rnd() * 0.4);
+        }
+        if (d.state == DRAGON) {
+            dragonTrail(dt);
+            return;
         }
         if (fx.size() > 260) return;
         if (d.state == NORMAL && d.fallK > 0.4) {
@@ -924,6 +1043,267 @@ public final class Game {
             f.life = 0.24;
             addFx(f);
         }
+    }
+
+    // ---------- 生命果实：复活 ----------
+    /**
+     * 用掉一次复活机会。m / h 是要了命的怪物 / 黑洞（直接打碎）；fell = 掉出了屏幕底部（从底下被弹回来）。
+     * 复活后有一段护盾和慢落。
+     */
+    void revive(Monster m, Hole h, boolean fell) {
+        Hero d = dd;
+        lives--;
+        reviveT = 0;
+        if (m != null && !m.dead) {
+            killMonster(m);
+            m.vy = -560;
+            m.vx = (wrapDx(m.x, d.x) >= 0 ? 1 : -1) * 200;
+        }
+        if (h != null) holes.remove(h);
+        d.state = NORMAL;
+        d.stateT = 0;
+        d.scale = 1;
+        d.spin = 0;
+        d.vx *= 0.3;
+        if (fell) {
+            d.y = d.prevY = d.py = camY + H + 16;
+            d.vy = 0;
+            bounce(C.REVIVE_V, 2);
+        } else {
+            bounce(C.SPRING_V, 2);
+        }
+        d.shield = C.REVIVE_SHIELD_T;
+        d.shieldKind = SHIELD_LIFE;
+        d.glide = C.GLIDE_T;
+        d.glideCol = GL_LIFE;
+        reviveFx(d.x, fell ? camY + H - 14 : d.y - CENTER, fell, m, h);
+        sfx(Snd.REVIVE);
+    }
+
+    void reviveFx(double x, double y, boolean fell, Monster m, Hole h) {
+        int[] cols = {0xff5c8a, 0xff9ab8, 0xffffff, 0x8fe35a, 0xffe27a};
+        if (m != null) smashFx(m.x, m.y);
+        if (h != null) smashFx(h.x, h.y);
+        if (fell) {
+            // 从屏幕底部冲出来：一道粉色光柱 + 扁平的冲击波
+            shockwave(x, y + 10, 900, 8, 0xff6e96, 0.3, 0.55, 0);
+            shockwave(x, y + 10, 700, 4, 0xffffff, 0.3, 0.5, 0.05);
+            beam(x, y + 40, 90, 700, 0xff8fb0, 0.7, 0);
+            beam(x, y + 40, 40, 520, 0xffffff, 0.5, 0.03);
+            burst(x, y, 30, 0, -PI * 0.92, -PI * 0.08, 260, 760, 600, 1.2, 4, 8, 0.7, 1.2, 40, SH_HEART, cols);
+        } else {
+            shockwave(x, y, 620, 8, 0xff6e96, 1, 0.55, 0);
+            shockwave(x, y, 480, 4, 0xffffff, 1, 0.5, 0.05);
+            shockwave(x, y, 360, 3, 0x8fe35a, 1, 0.45, 0.1);
+            beam(x, y + 30, 70, 480, 0xff8fb0, 0.6, 0);
+            burst(x, y, 24, 0, 0, TAU, 180, 520, 300, 1.4, 4, 8, 0.7, 1.2, 14, SH_HEART, cols);
+        }
+        glow(x, y, 150, 0xff8fb0, 0.45, 0);
+        rays(x, y, 20, 0, (TAU * 19) / 20, 160, 4.2, 0xff7aa0, 0.5, 0);
+        rays(x, y, 12, 0.15, 0.15 + (TAU * 11) / 12, 110, 2.6, 0xffffff, 0.42, 0.05);
+        popText(x, fell ? y - 70 : y - 56, "复活!!", 36, 0xff5c8a, 0, 1.0);
+        shake = Math.max(shake, 9);
+        flash = Math.max(flash, 0.55);
+        flashCol = 0xffd0de;
+        ghostT = 0.4;
+    }
+
+    // ---------- 变身药剂：飞龙 ----------
+    private static final int[] FIRE_COLS = {0xff4a1e, 0xff8a2a, 0xffc23a, 0xffe36a, 0xffffff};
+    private static final int[] EMBER = {0xff5a1e, 0xff9a2e, 0xffd04a, 0xfff2a0};
+    private static final int[] SH_FD = {Fx.S_FIRE, Fx.S_DOT, Fx.S_STAR};
+    private static final int[] SH_SHARD = {Fx.S_SHARD};
+
+    /** 屏幕里的怪物和黑洞全部炸掉（变身和变回来时的龙吼） */
+    void roarBlast(double x, double y) {
+        double top = camY - 40, bot = camY + H + 40;
+        int n = 0;
+        for (int i = 0; i < monsters.size(); i++) {
+            Monster m = monsters.get(i);
+            if (m.dead || m.y < top || m.y > bot) continue;
+            killMonster(m);
+            double a = Math.atan2(m.y - y, wrapDx(m.x, x));
+            m.vx = Math.cos(a) * 320;
+            m.vy = Math.sin(a) * 320 - 420;
+            dragonBlastFx(m.x, m.y, 0.05 + 0.05 * n++);
+        }
+        for (int i = holes.size() - 1; i >= 0; i--) {
+            Hole h = holes.get(i);
+            if (h.y < top || h.y > bot) continue;
+            holes.remove(i);
+            dragonBlastFx(h.x, h.y, 0.05 + 0.05 * n++);
+        }
+        if (n > 0) sfx(Snd.SMASH);
+    }
+
+    /** 龙焰爆炸：橙红色的火球 + 冲击波 + 火星 */
+    void dragonBlastFx(double x, double y, double delay) {
+        shockwave(x, y, 520, 7, 0xff5a1e, 1, 0.4, delay);
+        shockwave(x, y, 380, 3, 0xffe36a, 1, 0.34, delay + 0.03);
+        glow(x, y, 70, 0xff7a2a, 0.28, delay);
+        glow(x, y, 36, 0xfff2b0, 0.18, delay);
+        burst(x, y, 12, delay, 0, TAU, 160, 460, 500, 1.4, 4, 8, 0.35, 0.7, 12, SH_FIRE, FIRE_COLS);
+        burst(x, y, 8, delay, 0, TAU, 120, 380, 600, 1.3, 2.5, 5, 0.5, 0.9, 10, SH_SD, EMBER);
+        popText(x, y - 26, rnd() < 0.5 ? "BOOM!" : "燃!", 24, 0xff6a2a, delay, 0.75);
+        shake = Math.max(shake, 7);
+    }
+
+    /** 喝下药剂：瓶子炸碎 -> 一圈火焰被吸进来 -> 0.2 秒后巨龙破火而出，龙吼震碎全屏怪物 */
+    void dragonStartFx(double x, double y) {
+        double D = 0.2;
+        // 玻璃碎片 + 药水溅开
+        burst(x, y, 12, 0, 0, TAU, 160, 420, 700, 1.2, 3, 5, 0.5, 0.8, 8, SH_SHARD, new int[]{0xe8fbff, 0xbfe9ff, 0xffffff});
+        burst(x, y, 10, 0, 0, TAU, 120, 300, 500, 1.6, 3, 5, 0.3, 0.5, 8, SH_FIRE, FIRE_COLS);
+        // 火焰被“吸”进来
+        for (int i = 0; i < 24; i++) {
+            double a = ((double) i / 24) * TAU + rnd() * 0.2;
+            double r = 110 + rnd() * 40;
+            part(i % 3 == 0 ? Fx.S_STAR : Fx.S_FIRE, x + Math.cos(a) * r, y + Math.sin(a) * r, (-Math.cos(a) * r) / D,
+                    (-Math.sin(a) * r) / D, 0, 0, 3 + rnd() * 2.5, 8, FIRE_COLS[i % 4], D);
+        }
+        glow(x, y, 70, 0xff3a10, D + 0.05, 0);
+        spiral(x, y, 6, 150, 4, rnd() * TAU, -7, 0xff5a1e, D + 0.1, 0);
+        // 破火而出
+        shockwave(x, y, 1100, 16, 0x5a0a10, 1, 0.7, D);
+        shockwave(x, y, 950, 9, 0xff4a1e, 1, 0.62, D + 0.02);
+        shockwave(x, y, 780, 5, 0xffc23a, 1, 0.55, D + 0.06);
+        shockwave(x, y, 620, 3, 0xffffff, 1, 0.5, D + 0.1);
+        shockwave(x, y + CENTER, 1300, 8, 0xff6a2a, 0.3, 0.6, D);
+        glow(x, y, 220, 0xff5a1e, 0.55, D);
+        glow(x, y, 110, 0xfff2b0, 0.3, D);
+        beam(x, y + 60, 120, 900, 0xff5a1e, 0.75, D);
+        beam(x, y + 60, 50, 760, 0xffe36a, 0.6, D + 0.03);
+        spiral(x, y, 6, 180, 5, rnd() * TAU, 7, 0xff7a2a, 0.8, D);
+        spiral(x, y, 6, 140, 2.5, rnd() * TAU, 7, 0xffe36a, 0.7, D + 0.05);
+        rays(x, y, 28, 0, (TAU * 27) / 28, 220, 5.5, 0xff6a2a, 0.55, D);
+        rays(x, y, 14, 0.11, 0.11 + (TAU * 13) / 14, 160, 3, 0xfff2b0, 0.45, D + 0.03);
+        burst(x, y, 34, D, 0, TAU, 240, 760, 260, 1.4, 4, 9, 0.6, 1.3, 16, SH_FD, FIRE_COLS);
+        burst(x, y, 16, D, 0, TAU, 160, 520, 300, 1.2, 2.5, 5, 0.9, 1.6, 20, SH_SD, EMBER);
+        popText(x, y - 64, "化龙!!", 44, 0xff5a1e, D, 1.1);
+        shake = Math.max(shake, 15);
+        flash = Math.max(flash, 0.7);
+        flashCol = 0xff6a1e;
+        roarBlast(x, y);
+    }
+
+    /** 变回小海星：一团烟 + 最后一声龙吼 */
+    void dragonEndFx() {
+        Hero d = dd;
+        double x = d.x, y = d.y - CENTER - 20;
+        shockwave(x, y, 900, 10, 0xff4a1e, 1, 0.6, 0);
+        shockwave(x, y, 700, 5, 0xffc23a, 1, 0.52, 0.05);
+        shockwave(x, y, 520, 2.5, 0xffffff, 1, 0.46, 0.1);
+        glow(x, y, 180, 0xff6a2a, 0.45, 0);
+        rays(x, y, 24, 0, (TAU * 23) / 24, 190, 4.6, 0xff7a2a, 0.5, 0);
+        for (int i = 0; i < 12; i++) {
+            Fx f = newFx(Fx.PUFF);
+            double a = rnd() * TAU;
+            f.x = x + Math.cos(a) * 12;
+            f.y = y + Math.sin(a) * 12;
+            f.vx = Math.cos(a) * (90 + rnd() * 120);
+            f.vy = Math.sin(a) * (90 + rnd() * 120);
+            f.r = 7 + rnd() * 6;
+            f.life = f.max = 0.7 + rnd() * 0.3;
+            fx.add(f);
+        }
+        burst(x, y, 24, 0, 0, TAU, 200, 600, 400, 1.4, 4, 8, 0.6, 1.1, 20, SH_FD, FIRE_COLS);
+        popText(x, y - 50, "龙吼!!", 34, 0xff5a1e, 0, 0.9);
+        shake = Math.max(shake, 12);
+        flash = Math.max(flash, 0.45);
+        flashCol = 0xff8a3a;
+        roarBlast(x, y);
+    }
+
+    /** 飞龙飞行中：自动朝前方（含屏幕外上方）的怪物 / 黑洞吐龙息火球，时不时一声龙吼的冲击环 */
+    void dragonBreath(double dt, double left) {
+        Hero d = dd;
+        breathCd -= dt;
+        roarCd -= dt;
+        double mx = d.x, my = d.y - 78; // 龙嘴
+        if (roarCd <= 0 && left > 1) {
+            roarCd = 1.3;
+            shockwave(mx, my + 30, 520, 4, 0xff7a2a, 1, 0.42, 0);
+            shockwave(mx, my + 30, 400, 2, 0xffe36a, 1, 0.36, 0.05);
+        }
+        if (breathCd > 0) return;
+        Object target = null;
+        double tx = 0, ty = 0, best = 1e9;
+        for (int i = 0; i < monsters.size(); i++) {
+            Monster m = monsters.get(i);
+            if (m.dead || m.y > my || m.y < my - 520) continue;
+            double dd0 = my - m.y + Math.abs(wrapDx(m.x, mx)) * 0.5;
+            if (dd0 < best) {
+                best = dd0;
+                target = m;
+                tx = m.x;
+                ty = m.y;
+            }
+        }
+        for (int i = 0; i < holes.size(); i++) {
+            Hole h = holes.get(i);
+            if (h.y > my || h.y < my - 520) continue;
+            double dd0 = my - h.y + Math.abs(wrapDx(h.x, mx)) * 0.5;
+            if (dd0 < best) {
+                best = dd0;
+                target = h;
+                tx = h.x;
+                ty = h.y;
+            }
+        }
+        if (target == null) return;
+        breathCd = C.DRAGON_BREATH_CD;
+        // 在世界坐标里直线飞向目标，速度比飞龙自己再快 1800
+        double sp = 1800 + Math.abs(d.vy);
+        double ax = wrapDx(tx, mx), ay = ty - my;
+        double len = Math.max(1, Math.hypot(ax, ay));
+        Bullet b = new Bullet();
+        b.fire = true;
+        b.x = b.px = mx;
+        b.y = b.py = my;
+        b.vx = ax / len * sp;
+        b.vy = ay / len * sp;
+        b.life = 0.6;
+        bullets.add(b);
+        glow(mx, my, 30, 0xffb04a, 0.12, 0);
+        sfx(Snd.FIREBALL);
+    }
+
+    /** 飞龙的持续特效：嘴里喷出的火舌、翅尖甩出的火星、尾巴拖着的火焰 */
+    void dragonTrail(double dt) {
+        Hero d = dd;
+        double t = d.t;
+        // 嘴里的火舌：火焰粒子相对飞龙往前冲一小段
+        if (fx.size() < 340) {
+            Fx f = newFx(Fx.FIRE);
+            f.x = d.x + (rnd() - 0.5) * 5;
+            f.y = d.y - 80;
+            f.vx = d.vx + (rnd() - 0.5) * 70;
+            f.vy = d.vy - 260 - rnd() * 260;
+            f.r = 4.5 + rnd() * 3.5;
+            f.life = 0.12 + rnd() * 0.08;
+            addFx(f);
+        }
+        trailT -= dt;
+        if (trailT > 0 || fx.size() > 330) return;
+        trailT = 0.018;
+        // 尾巴尖的火焰（尾巴左右摆，和画面里的摆动大致同步）
+        double tailX = d.x + Math.sin(t * 7 - 15 * 0.55) * 14 - clamp(d.vx / 400, -1, 1) * 22;
+        for (int k = 0; k < 2; k++) {
+            Fx f = newFx(Fx.FIRE);
+            f.x = tailX + (rnd() - 0.5) * 8;
+            f.y = d.y + 96;
+            f.vx = (rnd() - 0.5) * 60;
+            f.vy = d.vy + 420 + rnd() * 300;
+            f.r = (6 + rnd() * 4) * (k == 0 ? 1 : 0.7);
+            f.life = 0.3 + rnd() * 0.2;
+            addFx(f);
+        }
+        // 翅尖甩出的火星
+        int s = rnd() < 0.5 ? -1 : 1;
+        double span = 70 + 18 * Math.cos(t * 9);
+        part(rnd() < 0.3 ? Fx.S_STAR : rnd() < 0.5 ? Fx.S_FIRE : Fx.S_DOT, d.x + s * span, d.y - 30 + (rnd() - 0.5) * 14,
+                s * (30 + rnd() * 70), d.vy + 500 + rnd() * 400, 0, 1.4, 2.2 + rnd() * 2.4, (rnd() - 0.5) * 14,
+                EMBER[(int) (rnd() * EMBER.length)], 0.4 + rnd() * 0.35);
     }
 
     void bounce(double v, double kick) {
@@ -1034,27 +1414,72 @@ public final class Game {
         for (int i = 0; i < platforms.size(); i++) {
             Platform p = platforms.get(i);
             Item it = p.item;
-            if (it == null || it.used || (it.type != I_PROP && it.type != I_JET && it.type != I_WINGS && it.type != I_DARK)) continue;
+            if (it == null || it.used || !pickup(it.type) || fruit(it.type)) continue;
             double dx = wrapDx(d.x, p.x + it.ox);
             if (Math.abs(dx) < it.w / 2 + C.HALF_W - 3 && d.y > p.y - it.h - 4 && d.y - C.BODY_H < p.y) {
                 it.used = true;
-                d.state = it.type == I_PROP ? PROPELLER : it.type == I_JET ? JETPACK : it.type == I_DARK ? DARKWINGS : WINGS;
-                d.stateT = 0;
-                d.vy = Math.min(d.vy, it.type == I_DARK ? -560 : it.type == I_WINGS ? -450 : -300);
-                d.glide = d.glideK = d.fallK = 0;
-                if (it.type == I_DARK) d.spinDir = d.vx < -20 ? -1 : d.vx > 20 ? 1 : (d.facing != 0 ? d.facing : 1);
-                whirT = 0;
-                trailT = 0;
-                itemFx(it.type, d.x, d.y - CENTER);
-                sfx(it.type == I_DARK ? Snd.DARKWINGS : it.type == I_WINGS ? Snd.WINGS : Snd.PICKUP);
+                startFlight(it.type);
                 return;
             }
         }
     }
 
+    /** 拿到螺旋桨帽 / 喷气背包 / 飞翼 / 紫黑飞翼 / 变身药剂 */
+    void startFlight(int type) {
+        Hero d = dd;
+        d.state = type == I_PROP ? PROPELLER : type == I_JET ? JETPACK : type == I_DARK ? DARKWINGS : type == I_DRAGON ? DRAGON : WINGS;
+        d.stateT = 0;
+        d.vy = Math.min(d.vy, type == I_DRAGON ? -700 : type == I_DARK ? -560 : type == I_WINGS ? -450 : -300);
+        d.glide = d.glideK = d.fallK = 0;
+        if (type == I_DARK) d.spinDir = d.vx < -20 ? -1 : d.vx > 20 ? 1 : (d.facing != 0 ? d.facing : 1);
+        whirT = 0.3;
+        trailT = 0;
+        breathCd = 0.12;
+        roarCd = 1.1;
+        itemFx(type, d.x, d.y - CENTER);
+        sfx(type == I_DRAGON ? Snd.DRAGON : type == I_DARK ? Snd.DARKWINGS : type == I_WINGS ? Snd.WINGS : Snd.PICKUP);
+    }
+
+    /** 生命果实 / 幸运果实：活着就能收，飞行中顺路也算（飞龙身体大，收得更宽） */
+    void fruits() {
+        Hero d = dd;
+        boolean dragon = d.state == DRAGON;
+        double reach = dragon ? 46 : C.HALF_W - 3;
+        double top = d.y - (dragon ? 80 : C.BODY_H), bot = d.y + (dragon ? 60 : 0);
+        for (int i = 0; i < platforms.size(); i++) {
+            Platform p = platforms.get(i);
+            Item it = p.item;
+            if (it == null || it.used || !fruit(it.type)) continue;
+            double dx = wrapDx(d.x, p.x + it.ox);
+            if (Math.abs(dx) < it.w / 2 + reach && bot > p.y - it.h - 18 && top < p.y) {
+                it.used = true;
+                giveFruit(it.type, p.x + it.ox, p.y - 18);
+            }
+        }
+    }
+
+    void giveFruit(int type, double x, double y) {
+        Hero d = dd;
+        if (type == I_LIFE) {
+            lives = Math.min(C.MAX_LIVES, lives + 1);
+            lifeT = 0;
+            sfx(Snd.LIFE);
+        } else {
+            luck = true;
+            luckEndY = Math.min(d.y, y) - C.LUCK_DIST * 2;
+            luckT = 0;
+            sfx(Snd.LUCK);
+        }
+        itemFx(type, x, y);
+    }
+
     /** 调试 / CI 截图用：直接让主角用上某个道具（和真的捡到、踩到时走同一套效果） */
     public void debugGive(int type) {
         Hero d = dd;
+        if (fruit(type)) {
+            giveFruit(type, d.x, d.y - CENTER);
+            return;
+        }
         if (type == I_SPRING || type == I_TRAMP) {
             puff(d.x, d.y, 6, 120);
             ring(d.x, d.y);
@@ -1065,15 +1490,7 @@ public final class Game {
             d.glideCol = type == I_SPRING ? GL_GOLD : GL_FIRE;
             return;
         }
-        d.state = type == I_PROP ? PROPELLER : type == I_JET ? JETPACK : type == I_DARK ? DARKWINGS : WINGS;
-        d.stateT = 0;
-        d.vy = Math.min(d.vy, type == I_DARK ? -560 : type == I_WINGS ? -450 : -300);
-        d.glide = d.glideK = d.fallK = 0;
-        if (type == I_DARK) d.spinDir = d.vx < -20 ? -1 : 1;
-        whirT = 0;
-        trailT = 0;
-        itemFx(type, d.x, d.y - CENTER);
-        sfx(type == I_DARK ? Snd.DARKWINGS : type == I_WINGS ? Snd.WINGS : Snd.PICKUP);
+        startFlight(type);
     }
 
     void hazards() {
@@ -1087,6 +1504,10 @@ public final class Game {
             if (m.dead) continue;
             double dx = wrapDx(d.x, m.x);
             if (!shielded && m.kind == M_UFO && Math.abs(dx) < 30 && bot > m.y + 12 && top < m.y + 150) {
+                if (lives > 0) {
+                    revive(m, null, false);
+                    return;
+                }
                 d.state = ABDUCTED;
                 d.stateT = 0;
                 d.sx = d.x;
@@ -1107,6 +1528,9 @@ public final class Game {
                     killMonster(m);
                     smashFx(m.x, m.y);
                     sfx(Snd.SMASH);
+                } else if (lives > 0) {
+                    revive(m, null, false);
+                    return;
                 } else {
                     d.state = DEAD;
                     d.stateT = 0;
@@ -1124,6 +1548,10 @@ public final class Game {
             double dy = d.y - CENTER - h.y;
             double rr = h.r * 0.85 + 12 * HS;
             if (dx * dx + dy * dy < rr * rr) {
+                if (lives > 0) {
+                    revive(null, h, false);
+                    return;
+                }
                 d.state = BLACKHOLE;
                 d.stateT = 0;
                 d.sx = d.x;
@@ -1141,12 +1569,14 @@ public final class Game {
     void smash() {
         Hero d = dd;
         double cy = d.y - CENTER;
-        double R = (d.state == DARKWINGS ? 34 : 30) * HS;
+        boolean dragon = d.state == DRAGON;
+        double R = dragon ? 54 : (d.state == DARKWINGS ? 34 : 30) * HS;
+        if (dragon) cy -= 10;
         for (int i = 0; i < monsters.size(); i++) {
             Monster m = monsters.get(i);
             if (m.dead) continue;
             double dx = wrapDx(d.x, m.x);
-            if (Math.abs(dx) < m.w / 2 + R && Math.abs(cy - m.y) < m.h / 2 + R) {
+            if (Math.abs(dx) < m.w / 2 + R && Math.abs(cy - m.y) < m.h / 2 + R + (dragon ? 40 : 0)) {
                 killMonster(m);
                 m.vy = -520;
                 m.vx = (dx >= 0 ? -1 : 1) * rand(120, 220);
@@ -1356,13 +1786,42 @@ public final class Game {
             for (int j = 0; j < monsters.size(); j++) {
                 Monster m = monsters.get(j);
                 if (m.dead) continue;
-                if (Math.abs(b.x - m.x) < m.w / 2 + 3 && Math.abs(b.y - m.y) < m.h / 2 + 3) {
-                    hitMonster(m);
+                double rr = b.fire ? 12 : 3;
+                if (Math.abs(b.x - m.x) < m.w / 2 + rr && Math.abs(b.y - m.y) < m.h / 2 + rr) {
+                    if (b.fire) {
+                        killMonster(m);
+                        m.vy = -480;
+                        dragonBlastFx(m.x, m.y, 0);
+                        sfx(Snd.BOOM);
+                    } else hitMonster(m);
                     hit = true;
                     break;
                 }
             }
-            if (hit || b.life <= 0 || b.x < -20 || b.x > W + 20 || b.y < camY - 60) bullets.remove(i);
+            if (!hit && b.fire) {
+                for (int j = holes.size() - 1; j >= 0; j--) {
+                    Hole h = holes.get(j);
+                    if (Math.hypot(b.x - h.x, b.y - h.y) < h.r + 12) {
+                        holes.remove(j);
+                        dragonBlastFx(h.x, h.y, 0);
+                        sfx(Snd.BOOM);
+                        hit = true;
+                        break;
+                    }
+                }
+            }
+            if (b.fire && !hit && rnd() < 0.5 && fx.size() < 330) {
+                // 火球拖着一串火星
+                Fx f = newFx(Fx.FIRE);
+                f.x = b.x + (rnd() - 0.5) * 6;
+                f.y = b.y + (rnd() - 0.5) * 6;
+                f.vx = -b.vx * 0.15;
+                f.vy = -b.vy * 0.15;
+                f.r = 4 + rnd() * 3;
+                f.life = 0.16 + rnd() * 0.1;
+                addFx(f);
+            }
+            if (hit || b.life <= 0 || b.x < -20 || b.x > W + 20 || b.y < camY - (b.fire ? 320 : 60)) bullets.remove(i);
         }
 
         for (int i = debris.size() - 1; i >= 0; i--) {

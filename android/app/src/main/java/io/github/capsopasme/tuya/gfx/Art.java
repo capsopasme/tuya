@@ -204,6 +204,209 @@ final class Art {
         c.restore();
     }
 
+    // ---------- 生命果实 / 幸运果实 / 变身药剂（悬在平台上方，一直在动） ----------
+    private static RadialGradient lifeGlow, lifeFruit, luckGlow, luckFruit, potionAura;
+    private static LinearGradient potionLiquid;
+    private static final DashPathEffect DASH_POTION = new DashPathEffect(new float[]{3, 5}, 0);
+
+    /** 心形（尖朝下），中心在 (x, y)，r 是半宽 */
+    static void heart(Path path, float x, float y, float r) {
+        path.moveTo(x, y + r * 0.95f);
+        path.cubicTo(x - r * 0.25f, y + r * 0.7f, x - r * 1.05f, y + r * 0.25f, x - r, y - r * 0.25f);
+        path.cubicTo(x - r * 0.95f, y - r * 0.85f, x - r * 0.2f, y - r * 1.05f, x, y - r * 0.5f);
+        path.cubicTo(x + r * 0.2f, y - r * 1.05f, x + r * 0.95f, y - r * 0.85f, x + r, y - r * 0.25f);
+        path.cubicTo(x + r * 1.05f, y + r * 0.25f, x + r * 0.25f, y + r * 0.7f, x, y + r * 0.95f);
+        path.close();
+    }
+
+    /** 一片四叶草的叶子（心形，尖朝原点），朝角度 a */
+    static void cloverLeaf(Pen p, float a, float r, int col) {
+        Canvas c = p.c;
+        c.save();
+        c.rotate(deg(a + PI / 2));
+        Path path = p.begin();
+        heart(path, 0, -r * 0.95f, r);
+        p.fillInk(path, col, 1.3f);
+        c.restore();
+    }
+
+    static void lifeIcon(Pen p, float x, float y, float r) {
+        Path path = p.begin();
+        heart(path, x, y, r);
+        if (lifeFruit == null)
+            lifeFruit = Grad.conical(-0.35f, -0.4f, 0.05f, 0, 0, 1.2f, new int[]{0xffffd0dc, 0xffff5c8a, 0xffc8143c}, new float[]{0, 0.45f, 1});
+        Grad.place(lifeFruit, x, y, r, r);
+        p.fillShader(path, lifeFruit, 1);
+        p.stroke(path, INK, Math.max(1.2f, r * 0.16f));
+        p.ovalFill(x - r * 0.42f, y - r * 0.32f, r * 0.2f, r * 0.13f, 0xccffffff);
+        // 小叶子
+        Path lf = p.begin();
+        lf.moveTo(x + r * 0.05f, y - r * 0.55f);
+        lf.quadTo(x + r * 0.35f, y - r * 1.25f, x + r * 0.9f, y - r * 1.05f);
+        lf.quadTo(x + r * 0.55f, y - r * 0.55f, x + r * 0.05f, y - r * 0.55f);
+        lf.close();
+        p.fillInk(lf, 0xff7fd34a, Math.max(1, r * 0.12f));
+    }
+
+    static void lifeItem(Pen p, float x, float y, float t) {
+        Canvas c = p.c;
+        c.save();
+        float bob = (float) Math.sin(t * 3.2f + x * 0.05f) * 2.2f;
+        c.translate(x, y - 16 + bob);
+        float beat = (float) Math.max(0, Math.sin(t * 6.5f)) ;
+        float pulse = 1 + 0.1f * beat * beat;
+        if (lifeGlow == null) lifeGlow = Grad.radial(0, 0, 30, new int[]{0xccff8fb0, 0x00ff8fb0}, new float[]{0.05f, 1});
+        p.circleShader(0, 0, 30, lifeGlow, 0.7f + 0.3f * beat);
+        // 一圈往外扩的心跳环
+        float u = (t * 1.2f) % 1;
+        p.circleStroke(0, 0, 12 + u * 18, Pen.rgba(0xff6e96, 0.6f * (1 - u)), 2);
+        c.scale(pulse, pulse);
+        lifeIcon(p, 0, 0, 11);
+        c.restore();
+        // 绕着转的小加号
+        for (int i = 0; i < 3; i++) {
+            float a = t * 1.8f + (i * TAU) / 3;
+            float k = 0.5f + 0.5f * (float) Math.sin(t * 6 + i * 2);
+            float px = x + (float) Math.cos(a) * 20, py = y - 16 + bob + (float) Math.sin(a) * 9;
+            float r = 2 + 1.6f * k;
+            p.line(px - r, py, px + r, py, Pen.rgba(0xffffff, 0.5f + 0.5f * k), 1.8f);
+            p.line(px, py - r, px, py + r, Pen.rgba(0xffffff, 0.5f + 0.5f * k), 1.8f);
+        }
+    }
+
+    static void luckIcon(Pen p, float x, float y, float r, float spin) {
+        Canvas c = p.c;
+        c.save();
+        c.translate(x, y);
+        c.rotate(deg(spin));
+        for (int i = 0; i < 4; i++) cloverLeaf(p, i * PI / 2 + PI / 4, r * 0.55f, i == 0 ? 0xff8fe35a : 0xff5fc43a);
+        p.circle(0, 0, r * 0.16f, 0xffffe27a);
+        c.restore();
+    }
+
+    static void luckItem(Pen p, float x, float y, float t) {
+        Canvas c = p.c;
+        c.save();
+        float bob = (float) Math.sin(t * 2.8f + x * 0.05f) * 2.2f;
+        c.translate(x, y - 16 + bob);
+        if (luckGlow == null) luckGlow = Grad.radial(0, 0, 32, new int[]{0xccfff09a, 0x55b6f783, 0x00b6f783}, new float[]{0.05f, 0.5f, 1});
+        p.circleShader(0, 0, 32, luckGlow, 0.75f + 0.25f * (float) Math.sin(t * 4));
+        // 金色的圆果子
+        if (luckFruit == null)
+            luckFruit = Grad.conical(-3.5f, -4, 0.5f, 0, 0, 12, new int[]{0xfffffbe0, 0xffffd94a, 0xffd99414}, new float[]{0, 0.45f, 1});
+        p.circleShader(0, 2, 10.5f, luckFruit, 1);
+        p.circleStroke(0, 2, 10.5f, INK, 1.8f);
+        Path sh = p.begin();
+        p.rect.set(-7, -5, 7, 9);
+        sh.arcTo(p.rect, 200, 70, true);
+        p.stroke(sh, 0xccffffff, 1.6f);
+        // 顶上长出一棵转着的四叶草
+        p.line(0, -8, 0, -13, 0xff3d8a28, 2);
+        luckIcon(p, 0, -15, 14, (float) Math.sin(t * 2) * 0.4f);
+        c.restore();
+        // 彩虹色的小星星绕着转
+        int[] cs = {0xffe27a, 0x7be0ff, 0xff8fd0, 0xb6f783};
+        for (int i = 0; i < 4; i++) {
+            float a = -t * 1.6f + (i * TAU) / 4;
+            float k = 0.5f + 0.5f * (float) Math.sin(t * 7 + i * 1.7f);
+            Path path = p.begin();
+            Pen.star(path, x + (float) Math.cos(a) * 22, y - 16 + bob + (float) Math.sin(a) * 10, 1.8f + 2 * k);
+            p.fill(path, Pen.rgba(cs[i], 0.6f + 0.4f * k));
+        }
+    }
+
+    /** 变身药剂：圆肚烧瓶里翻滚着赤红的岩浆药水，里面一只金色的竖瞳龙眼，外面一圈金色符文环和火苗 */
+    static void potionItem(Pen p, float x, float y, float t) {
+        Canvas c = p.c;
+        c.save();
+        float bob = (float) Math.sin(t * 2.4f + x * 0.05f) * 2.6f;
+        c.translate(x, y - 21 + bob);
+        float pulse = 0.72f + 0.28f * (float) Math.sin(t * 4.5f);
+        if (potionAura == null)
+            potionAura = Grad.radial(0, 0, 40, new int[]{0xd9ff7a2a, 0x66ff3a10, 0x00ff3a10}, new float[]{0.05f, 0.5f, 1});
+        p.circleShader(0, 2, 40, potionAura, pulse);
+        // 金色符文环
+        c.save();
+        c.rotate(deg(t * 1.1f));
+        p.stroke.setPathEffect(DASH_POTION);
+        p.circleStroke(0, 2, 27, 0xe6ffd36a, 1.5f);
+        p.stroke.setPathEffect(null);
+        Path rn = p.begin();
+        for (int i = 0; i < 6; i++) {
+            float a = i * TAU / 6;
+            float ca = (float) Math.cos(a), sa = (float) Math.sin(a);
+            rn.moveTo(ca * 30, 2 + sa * 30);
+            rn.lineTo(ca * 34, 2 + sa * 34);
+        }
+        p.stroke(rn, 0xccffb04a, 1.6f);
+        c.restore();
+        // 绕着转的火苗
+        for (int i = 0; i < 5; i++) {
+            float a = -t * 2.3f + (i * TAU) / 5;
+            float px = (float) Math.cos(a) * 24, py = 2 + (float) Math.sin(a) * 11;
+            float k = 0.5f + 0.5f * (float) Math.sin(t * 9 + i);
+            Path f = p.begin();
+            f.moveTo(px - 2.6f, py + 2);
+            f.quadTo(px - 2.6f, py - 3, px, py - 5 - 3 * k);
+            f.quadTo(px + 2.6f, py - 3, px + 2.6f, py + 2);
+            f.close();
+            p.fill(f, Pen.rgba(0xff8a2a, 0.65f + 0.35f * k));
+            p.circle(px, py, 1.3f, 0xfffff2b0);
+        }
+        // 瓶子
+        float R = 11.5f;
+        p.rrInk(-4.2f, -19, 8.4f, 10, 2, 0x66e8fbff, 1.6f); // 瓶颈
+        p.rrInk(-5.6f, -24, 11.2f, 6, 2.4f, 0xffb07a44, 1.6f); // 木塞
+        p.line(-3.5f, -22.5f, 3.5f, -22.5f, 0x80ffffff, 1);
+        // 液体（波浪液面）
+        Canvas cc = p.c;
+        cc.save();
+        Path clip = p.path2;
+        clip.rewind();
+        clip.addCircle(0, 2, R - 0.6f, Path.Direction.CW);
+        cc.clipPath(clip);
+        p.circle(0, 2, R, 0x55e8fbff);
+        Path lq = p.begin();
+        float lvl = -1.5f;
+        lq.moveTo(-R, lvl);
+        for (int i = 0; i <= 8; i++) {
+            float q = i / 8f;
+            lq.lineTo(-R + q * 2 * R, lvl + (float) Math.sin(t * 5 + q * 7) * 1.4f);
+        }
+        lq.lineTo(R, R + 4);
+        lq.lineTo(-R, R + 4);
+        lq.close();
+        if (potionLiquid == null)
+            potionLiquid = Grad.linear(0, -2, 0, 14, new int[]{0xffff8a2a, 0xffe8283a, 0xff7a0a24}, null);
+        p.fillShader(lq, potionLiquid, 1);
+        // 龙眼
+        float blink = (t % 3.2f) < 0.12f ? 0.15f : 1;
+        p.ovalFill(0, 5, 5.6f, 3.4f * blink, 0xffffd04a);
+        p.ovalFill(0, 5, 1.2f, 3f * blink, 0xff2a0408);
+        p.circle(-1.8f, 4, 0.8f, 0xccffffff);
+        // 气泡往上冒
+        for (int i = 0; i < 4; i++) {
+            float u = ((t * 0.9f + i * 0.27f) % 1);
+            float bx = (float) Math.sin(i * 5.3f + t * 2) * 5;
+            p.circleStroke(bx, 10 - u * 14, 0.9f + i * 0.25f, Pen.rgba(0xfff2b0, 1 - u), 0.9f);
+        }
+        cc.restore();
+        p.circleStroke(0, 2, R, INK, 1.9f);
+        // 玻璃反光
+        Path gl = p.begin();
+        p.rect.set(-R + 2.5f, -R + 4.5f, R - 2.5f, R - 0.5f);
+        gl.arcTo(p.rect, 195, 60, true);
+        p.stroke(gl, 0xd9ffffff, 1.8f);
+        c.restore();
+        // 瓶口冒出来的火星
+        for (int i = 0; i < 3; i++) {
+            float u = ((t * 0.8f + i * 0.33f) % 1);
+            float ex = x + (float) Math.sin(t * 3 + i * 2.1f) * (3 + u * 6);
+            float ey = y - 21 + bob - 25 - u * 18;
+            p.circle(ex, ey, 1.6f * (1 - u) + 0.4f, Pen.rgba(i == 1 ? 0xfff2b0 : 0xffa03a, 1 - u));
+        }
+    }
+
     static float deg(float rad) {
         return rad * (180f / PI);
     }
