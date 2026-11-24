@@ -29,6 +29,12 @@
 
 **紫黑飞翼**（5000 分以后才会出现，更稀有）：速度是白色飞翼的 1.4 倍，拿到的一瞬间先把一圈紫色星屑“吸”进来再炸开；飞行中小海星整个旋转起来（3D 模式下是真的在光照里转），身后拖着紫色残影、星屑、符文环和绕身彗星，结束时带紫色护盾。
 
+**变身药剂**（7000 分以后才会出现，最稀有，取代紫黑飞翼成为新的终极道具）：瓶子一碎，一圈火焰被吸进去再炸开，小海星变成一条**赤焰飞龙**——红色长身子蛇一样摆动、一对大蝙蝠翼扇着火星、金色犄角、冰蓝色发光的眼睛，额头上嵌着小海星的金星。变身那一声龙吼直接炸掉屏幕里所有怪物和黑洞；之后以紫黑飞翼 1.2 倍多的速度连飞 7 秒多（约 **8000 分**），嘴里一直喷火，前方的怪物和黑洞会被自动吐出的龙息火球烧掉，撞上的也一路撞飞；屏幕两侧烧起热浪。变回小海星时再吼一声清屏，附带 2.4 秒火焰护盾。
+
+**生命果实**（1500 分以后）：复活机会 +1（最多 9 次，左上角分数旁边的小心形）。被怪物撞到、被黑洞吸进去、被 UFO 抓走或者掉出屏幕时，自动用掉一次：要命的怪物/黑洞被打碎，小海星被弹起来（掉下去的话从屏幕底部冲回来），附带 2.6 秒粉色护盾。飞行中路过也能顺路收走。
+
+**幸运果实**（600 分以后）：接下来 2500 分的距离里，弹簧、蹦床、螺旋桨帽少七成，飞翼、紫黑飞翼、变身药剂多好几倍、而且出现门槛减半，生命果实也更多。左上角的四叶草进度条显示还剩多远。
+
 **慢落**：用完任何道具之后，冲到顶开始往下掉的那段会慢慢飘下来，落到普通平台上立刻恢复正常；上升段不受影响。
 
 **身体倾斜和蓄力**：空中身体会朝移动方向歪一点；落到平台上腿被压扁的那一下身体朝你倾斜手机的方向压下去，起跳时被甩回来。纯视觉，不影响碰撞和手感。
@@ -56,7 +62,7 @@
 android/app/src/main/java/io/github/capsopasme/tuya/
   game/     游戏逻辑（纯 Java，不依赖安卓）：常量 C、关卡生成和物理 Game、主角状态 Hero、特效 Fx、倾斜滤波 Tilt
             Sim 是无头模拟测试（关卡可达、机器人能爬高、各道具机制），Bot 是测试用的自动驾驶
-  gfx/      画面：Scene（整个场景）、Art（平台/道具/怪物）、HeroArt（主角 2D）、Hero3D（AGSL 3D 主角）、Sprites（贴图缓存）
+  gfx/      画面：Scene（整个场景）、Art（平台/道具/怪物）、HeroArt（主角 2D）、DragonArt（变身后的飞龙）、Hero3D（AGSL 3D 主角）、Sprites（贴图缓存）
   app/      MainActivity（窗口、传感器、刷新率）、GameView（主循环、触屏）、Ui（菜单/设置/排行榜/结算）、
             Synth + Sfx（音效合成和播放）、Store（存档）、Migrate（从旧版迁移成绩）
 ci/shots.sh 模拟器里的自动截图脚本
@@ -71,6 +77,6 @@ java -cp /tmp/sim io.github.capsopasme.tuya.game.Sim
 cd android && ./gradlew assembleRelease
 ```
 
-调试场景：`adb shell am start -n io.github.capsopasme.tuya/.app.MainActivity --es scene wings` 会直接摆出某个状态（`play`、`spring`、`tramp`、`prop`、`jet`、`wings`、`dark`、`glide`、`shield`、`monsters`、`dead`、`pause`、`over`，前面加 `2d-` 用 2D 主角；`live` 是机器人一直自动玩）。*Emulator check* 工作流会在模拟器里把这些场景全部截图，推到 `ci-shots` 分支。
+调试场景：`adb shell am start -n io.github.capsopasme.tuya/.app.MainActivity --es scene wings` 会直接摆出某个状态（`play`、`spring`、`tramp`、`prop`、`jet`、`wings`、`dark`、`dragon`、`dragon2`、`dragon-end`、`life`、`luck`、`revive`、`items`、`glide`、`shield`、`monsters`、`dead`、`pause`、`over`，前面加 `2d-` 用 2D 主角；`live` 是机器人一直自动玩）。*Emulator check* 工作流会在模拟器里把这些场景全部截图，推到 `ci-shots` 分支。
 
 想调手感，改 `game/C.java`（重力、起跳速度、水平加速度等）；改名字改 `android/app/src/main/res/values/strings.xml` 和 `app/Ui.java` 里的标题。

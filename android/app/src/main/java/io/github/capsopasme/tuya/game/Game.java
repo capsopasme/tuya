@@ -421,6 +421,7 @@ public final class Game {
             double ramp = wings || dragon ? 1 : 0.7; // 最后这段时间慢慢减速
             double left = T - d.stateT;
             double tv = -(left > ramp ? V : lerp(250, V, Math.max(0, left) / ramp));
+            if (dragon && d.stateT < C.DRAGON_HOVER) tv = -160;
             double acc = dragon ? 5600 : dark ? 4600 : wings ? 3600 : 2600;
             d.vy += clamp(tv - d.vy, -acc * dt, acc * dt);
             d.y += d.vy * dt;
@@ -1219,7 +1220,7 @@ public final class Game {
         Hero d = dd;
         breathCd -= dt;
         roarCd -= dt;
-        double mx = d.x, my = d.y - 78; // 龙嘴
+        double mx = d.x, my = d.y - 100; // 龙嘴
         if (roarCd <= 0 && left > 1) {
             roarCd = 1.3;
             shockwave(mx, my + 30, 520, 4, 0xff7a2a, 1, 0.42, 0);
@@ -1276,10 +1277,10 @@ public final class Game {
         if (fx.size() < 340) {
             Fx f = newFx(Fx.FIRE);
             f.x = d.x + (rnd() - 0.5) * 5;
-            f.y = d.y - 80;
+            f.y = d.y - 104;
             f.vx = d.vx + (rnd() - 0.5) * 70;
             f.vy = d.vy - 260 - rnd() * 260;
-            f.r = 4.5 + rnd() * 3.5;
+            f.r = 2.4 + rnd() * 2;
             f.life = 0.12 + rnd() * 0.08;
             addFx(f);
         }
@@ -1294,13 +1295,13 @@ public final class Game {
             f.y = d.y + 96;
             f.vx = (rnd() - 0.5) * 60;
             f.vy = d.vy + 420 + rnd() * 300;
-            f.r = (6 + rnd() * 4) * (k == 0 ? 1 : 0.7);
+            f.r = (4 + rnd() * 2.5) * (k == 0 ? 1 : 0.7);
             f.life = 0.3 + rnd() * 0.2;
             addFx(f);
         }
         // 翅尖甩出的火星
         int s = rnd() < 0.5 ? -1 : 1;
-        double span = 70 + 18 * Math.cos(t * 9);
+        double span = (78 + 26 * Math.cos(t * 9.5)) * 1.3;
         part(rnd() < 0.3 ? Fx.S_STAR : rnd() < 0.5 ? Fx.S_FIRE : Fx.S_DOT, d.x + s * span, d.y - 30 + (rnd() - 0.5) * 14,
                 s * (30 + rnd() * 70), d.vy + 500 + rnd() * 400, 0, 1.4, 2.2 + rnd() * 2.4, (rnd() - 0.5) * 14,
                 EMBER[(int) (rnd() * EMBER.length)], 0.4 + rnd() * 0.35);

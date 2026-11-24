@@ -33,7 +33,8 @@ public final class C {
     public static final double DARK_VX = 1.35;
     public static final double DARK_SPIN = 15; // 旋转角速度（弧度/秒）
     public static final double DRAGON_V = 2350; // 变身飞龙：新的终极道具，比紫黑飞翼再快两成多、飞得久得多（约 8000 分）
-    public static final double DRAGON_T = 7.4;
+    public static final double DRAGON_T = 7.7;
+    public static final double DRAGON_HOVER = 0.28; // 变身后先悬停一下（巨龙从火里钻出来），再冲出去
     public static final double DRAGON_VX = 1.5;
     public static final double DRAGON_SHIELD_T = 2.4; // 变回小海星后的火焰护盾
     public static final double DRAGON_BREATH_CD = 0.11; // 龙息火球的间隔

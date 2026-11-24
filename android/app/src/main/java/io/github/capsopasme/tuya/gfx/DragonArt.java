@@ -22,7 +22,8 @@ final class DragonArt {
     static final float SEG = 9.5f;
     static final float NECK_Y = -52;
     /** 走到屏幕边缘时另一侧也要画一份的边距（翅膀很宽） */
-    static final float EDGE = 112;
+    static final float EDGE = 150;
+    static final float WING_K = 1.3f; // 翅膀整体放大
 
     private final Pen p;
     private final float[] sx = new float[N], sy = new float[N], sr = new float[N];
@@ -127,7 +128,7 @@ final class DragonArt {
         }
         p.stroke(sc, 0x8c4a0610, 1.3f);
         for (int i = 1; i < N - 3; i++) {
-            float r = sr[i] * 0.62f;
+            float r = sr[i] * 0.48f;
             float cx = sx[i], cy = sy[i];
             Path sp = p.begin();
             sp.moveTo(cx - r * 0.5f, cy - r * 0.35f);
@@ -143,7 +144,7 @@ final class DragonArt {
         c.save();
         c.translate(hx, hy);
         c.rotate(deg(ang));
-        c.scale(1.18f, 1.18f);
+        c.scale(1.12f, 1.12f);
         head(t);
         c.restore();
 
@@ -226,11 +227,11 @@ final class DragonArt {
 
     private void wing(int s, float x, float y, float ph, float t) {
         Canvas c = p.c;
-        float span = 0.7f + 0.3f * (float) Math.cos(ph);
-        float sweep = 0.24f * (float) Math.sin(ph);
+        float span = 0.74f + 0.26f * (float) Math.cos(ph);
+        float sweep = 0.2f * (float) Math.sin(ph) - 0.08f;
         c.save();
         c.translate(x, y);
-        c.scale(s * span, 1 + 0.06f * (float) Math.sin(ph));
+        c.scale(s * span * WING_K, WING_K * (1 + 0.06f * (float) Math.sin(ph)));
         c.rotate(deg(sweep));
         Path m = p.begin();
         m.moveTo(0, 0);
@@ -287,135 +288,147 @@ final class DragonArt {
     private void head(float t) {
         Canvas c = p.c;
         // 嘴里的火舌（先画，压在头下面）
-        float L = 18 + 6 * (float) Math.sin(t * 37) + 4 * (float) Math.sin(t * 23 + 1);
+        float L = 20 + 7 * (float) Math.sin(t * 37) + 4 * (float) Math.sin(t * 23 + 1);
         if (mouthGlow == null) mouthGlow = Grad.radial(0, 0, 1, new int[]{0xccffb04a, 0x00ff6a2a}, null);
-        Grad.place(mouthGlow, 0, -40, 24, 24);
-        p.circleShader(0, -40, 24, mouthGlow, 1);
-        Path f = p.begin();
-        f.moveTo(-5.5f, -33);
-        f.quadTo(-8, -34 - L * 0.55f, 0, -34 - L);
-        f.quadTo(8, -34 - L * 0.55f, 5.5f, -33);
-        f.close();
-        p.fill(f, 0xf2ff6a2a);
-        f = p.begin();
-        f.moveTo(-3.5f, -33);
-        f.quadTo(-5, -34 - L * 0.45f, 0, -34 - L * 0.78f);
-        f.quadTo(5, -34 - L * 0.45f, 3.5f, -33);
-        f.close();
-        p.fill(f, 0xffffd04a);
-        f = p.begin();
-        f.moveTo(-1.6f, -33);
-        f.quadTo(-2, -34 - L * 0.3f, 0, -34 - L * 0.5f);
-        f.quadTo(2, -34 - L * 0.3f, 1.6f, -33);
-        f.close();
-        p.fill(f, 0xfffff8e0);
+        Grad.place(mouthGlow, 0, -50, 26, 26);
+        p.circleShader(0, -50, 26, mouthGlow, 1);
+        flame(-43, L, 5.5f, 0.55f, 0xf2ff5a1e);
+        flame(-43, L * 0.8f, 3.6f, 0.45f, 0xffffc23a);
+        flame(-43, L * 0.5f, 1.7f, 0.3f, 0xfffff8e0);
 
         // 胡须：从鼻子两边往后飘，像中国龙
         for (int s = -1; s <= 1; s += 2) {
             Path w = p.begin();
-            w.moveTo(s * 5, -29);
+            w.moveTo(s * 6, -36);
             for (int j = 1; j <= 10; j++) {
                 float q = j / 10f;
-                float wx = s * (6 + q * 16 + (float) Math.sin(t * 6 - q * 4 + s) * 4 * q);
-                float wy = -29 + q * 46;
+                float wx = s * (7 + q * 20 + (float) Math.sin(t * 6 - q * 4 + s) * 5 * q);
+                float wy = -36 + q * 50;
                 w.lineTo(wx, wy);
             }
             p.stroke(w, INK, 2.6f);
             p.stroke(w, 0xffffd36a, 1.3f);
         }
 
-        // 犄角：金白色，从头顶两侧往后弯
-        if (hornGrad == null) hornGrad = Grad.linear(0, -8, 0, 28, 0xfffff3d6, 0xffc9963a);
+        // 犄角：金白色的长角，从眼睛后面往外、往后扫，伸出头的轮廓很多
+        if (hornGrad == null) hornGrad = Grad.linear(0, -14, 0, 30, 0xfffff6dc, 0xffc98a2a);
         for (int s = -1; s <= 1; s += 2) {
             Path h = p.begin();
-            h.moveTo(s * 5, -9);
-            h.cubicTo(s * 12, -14, s * 24, 2, s * 25, 28);
-            h.cubicTo(s * 19, 8, s * 14, 0, s * 11, -2);
+            h.moveTo(s * 13, -4);
+            h.cubicTo(s * 20, 2, s * 25, 10, s * 25, 20);
+            h.cubicTo(s * 21, 12, s * 16, 6, s * 10, 2);
+            h.close();
+            p.fillInk(h, 0xffe6c27a, 1.4f);
+            h = p.begin();
+            h.moveTo(s * 4, -15);
+            h.cubicTo(s * 16, -20, s * 33, -3, s * 34, 32);
+            h.cubicTo(s * 26, 10, s * 18, 0, s * 10, -5);
             h.close();
             p.fillShader(h, hornGrad, 1);
-            p.stroke(h, INK, 1.6f);
+            p.stroke(h, INK, 1.7f);
             Path rg = p.begin();
-            rg.moveTo(s * 10, -9);
-            rg.quadTo(s * 13, -7, s * 13, -3);
-            rg.moveTo(s * 15, -4);
-            rg.quadTo(s * 18, -1, s * 17, 3);
-            rg.moveTo(s * 19, 3);
-            rg.quadTo(s * 22, 7, s * 20, 10);
+            rg.moveTo(s * 13, -14);
+            rg.quadTo(s * 15, -11, s * 14, -6);
+            rg.moveTo(s * 19, -10);
+            rg.quadTo(s * 22, -6, s * 19, -1);
+            rg.moveTo(s * 24, -4);
+            rg.quadTo(s * 27, 1, s * 24, 5);
+            rg.moveTo(s * 28, 4);
+            rg.quadTo(s * 31, 9, s * 28, 12);
             p.stroke(rg, 0x99825020, 1.1f);
-            // 腮边的小尖刺
+            // 腮边一排尖刺
             Path fr = p.begin();
-            fr.moveTo(s * 14, -14);
-            fr.lineTo(s * 24, -10);
-            fr.lineTo(s * 15, -8);
-            fr.lineTo(s * 22, -3);
-            fr.lineTo(s * 13, -4);
+            fr.moveTo(s * 13, -14);
+            fr.lineTo(s * 25, -15);
+            fr.lineTo(s * 15, -10);
+            fr.lineTo(s * 25, -7);
+            fr.lineTo(s * 15, -5);
+            fr.lineTo(s * 22, 0);
+            fr.lineTo(s * 12, -1);
             fr.close();
             p.fillInk(fr, 0xff9a1626, 1.3f);
         }
 
-        // 头骨
+        // 头骨：棱角分明的长吻
         Path h = p.begin();
-        h.moveTo(0, 6);
-        h.quadTo(-10, 7, -13, 2);
-        h.cubicTo(-17, -4, -16, -14, -11, -22);
-        h.cubicTo(-8, -27, -7, -31, -4, -35);
-        h.quadTo(0, -38, 4, -35);
-        h.cubicTo(7, -31, 8, -27, 11, -22);
-        h.cubicTo(16, -14, 17, -4, 13, 2);
-        h.quadTo(10, 7, 0, 6);
+        h.moveTo(0, 7);
+        h.quadTo(-9, 8, -12, 3);
+        h.lineTo(-15, -7);
+        h.quadTo(-15.5f, -13, -11, -18);
+        h.lineTo(-7, -31);
+        h.quadTo(-6, -41, -3, -44.5f);
+        h.quadTo(0, -46.5f, 3, -44.5f);
+        h.quadTo(6, -41, 7, -31);
+        h.lineTo(11, -18);
+        h.quadTo(15.5f, -13, 15, -7);
+        h.lineTo(12, 3);
+        h.quadTo(9, 8, 0, 7);
         h.close();
         if (headGrad == null)
-            headGrad = Grad.conical(-3, -16, 2, 0, -12, 24, new int[]{0xffff7a50, 0xffd8262f, 0xff7a0e1c}, new float[]{0, 0.55f, 1});
+            headGrad = Grad.conical(-3, -22, 2, 0, -16, 28, new int[]{0xffff7a50, 0xffd8262f, 0xff7a0e1c}, new float[]{0, 0.5f, 1});
         p.fillShader(h, headGrad, 1);
         p.stroke(h, INK, 2.4f);
-        // 鼻梁上的高光和鳞
-        p.line(0, -31, 0, -14, 0x66ffc8a0, 2.4f);
+        // 鼻梁高光和鳞
+        p.line(0, -40, 0, -14, 0x55ffc8a0, 2.6f);
         Path sc = p.begin();
-        for (int j = 0; j < 3; j++) {
-            float yy = -24 + j * 6;
-            sc.moveTo(-4, yy);
-            sc.lineTo(0, yy + 2.6f);
-            sc.lineTo(4, yy);
+        for (int j = 0; j < 4; j++) {
+            float yy = -36 + j * 5.5f;
+            float w = 2.6f + j * 0.6f;
+            sc.moveTo(-w, yy);
+            sc.lineTo(0, yy + 2.4f);
+            sc.lineTo(w, yy);
         }
         p.stroke(sc, 0x8c4a0610, 1.1f);
         // 鼻孔冒火星
         for (int s = -1; s <= 1; s += 2) {
-            p.ovalFill(s * 2.6f, -31, 1.3f, 1.8f, 0xff2a0408);
-            p.circle(s * 2.6f, -31.5f, 0.9f, Pen.rgba(0xffb04a, 0.6f + 0.4f * (float) Math.sin(t * 30 + s)));
+            p.ovalFill(s * 2.8f, -39.5f, 1.2f, 1.9f, 0xff2a0408);
+            p.circle(s * 2.8f, -40, 0.9f, Pen.rgba(0xffb04a, 0.6f + 0.4f * (float) Math.sin(t * 30 + s)));
         }
 
-        // 眉骨：压低、向内斜，凶一点
-        for (int s = -1; s <= 1; s += 2) {
-            Path br = p.begin();
-            br.moveTo(s * 13.5f, -11);
-            br.quadTo(s * 9, -15, s * 4.5f, -20);
-            p.stroke(br, INK, 2.6f);
-        }
-        // 发光的冰蓝眼睛 + 往后拖的光痕
+        // 发光的冰蓝竖瞳，往外拖出光痕
         if (eyeGlow == null) eyeGlow = Grad.radial(0, 0, 1, new int[]{0xcc9ef8ff, 0x007df0ff}, null);
         float pulse = 0.8f + 0.2f * (float) Math.sin(t * 9);
         for (int s = -1; s <= 1; s += 2) {
-            float ex = s * 8.6f, ey = -14.5f;
-            Grad.place(eyeGlow, ex, ey, 11, 11);
-            p.circleShader(ex, ey, 11, eyeGlow, pulse);
+            float ex = s * 8.2f, ey = -18;
+            Grad.place(eyeGlow, ex, ey, 12, 12);
+            p.circleShader(ex, ey, 12, eyeGlow, pulse);
             Path tr = p.begin();
-            tr.moveTo(ex + s * 2, ey + 1);
-            tr.quadTo(ex + s * 9, ey + 8, ex + s * 12, ey + 20);
-            p.stroke(tr, Pen.rgba(0x9ef8ff, 0.45f * pulse), 2.2f);
+            tr.moveTo(ex + s * 3, ey + 0.5f);
+            tr.quadTo(ex + s * 10, ey + 3, ex + s * 16, ey + 9);
+            p.stroke(tr, Pen.rgba(0x9ef8ff, 0.55f * pulse), 2.4f);
+            p.stroke(tr, Pen.rgba(0xffffff, 0.5f * pulse), 0.9f);
             c.save();
             c.translate(ex, ey);
-            c.rotate(deg(s * -0.55f));
-            p.ovalFill(0, 0, 4.6f, 2.3f, INK);
-            p.ovalFill(0, 0, 3.7f, 1.6f, 0xffe6fdff);
-            p.ovalFill(0, 0, 0.7f, 1.5f, 0xff0a3a48);
+            c.rotate(deg(s * -0.42f));
+            p.ovalFill(0, 0, 5.6f, 2.3f, INK);
+            p.ovalFill(0, 0, 4.7f, 1.45f, 0xffd8fbff);
+            p.ovalFill(0, 0, 0.65f, 1.35f, 0xff06323e);
             c.restore();
+            // 压低的眉骨：一块暗红的骨板盖住眼睛上沿
+            Path br = p.begin();
+            br.moveTo(s * 15.5f, -14);
+            br.lineTo(s * 9.5f, -21.5f);
+            br.lineTo(s * 2.5f, -25.5f);
+            br.lineTo(s * 8, -19.8f);
+            br.close();
+            p.fillInk(br, 0xff5a0a14, 1.2f);
         }
         // 额头上的金色星星：小海星的印记
         if (starGlow == null) starGlow = Grad.radial(0, 0, 1, new int[]{0xccfff0a0, 0x00ffd04a}, null);
-        Grad.place(starGlow, 0, -7, 9, 9);
-        p.circleShader(0, -7, 9, starGlow, 0.7f + 0.3f * (float) Math.sin(t * 5));
+        Grad.place(starGlow, 0, -8, 9, 9);
+        p.circleShader(0, -8, 9, starGlow, 0.7f + 0.3f * (float) Math.sin(t * 5));
         Path stp = p.begin();
-        Pen.star(stp, 0, -7, 4.6f);
+        Pen.star(stp, 0, -8, 4.6f);
         p.fillInk(stp, 0xffffd93b, 1.2f);
+    }
+
+    /** 一条往上喷的火舌：底边中心在 (0, y0)，长 L，底宽 2w */
+    private void flame(float y0, float L, float w, float bulge, int col) {
+        Path f = p.begin();
+        f.moveTo(-w, y0);
+        f.quadTo(-w * 1.45f, y0 - L * bulge, 0, y0 - L);
+        f.quadTo(w * 1.45f, y0 - L * bulge, w, y0);
+        f.close();
+        p.fill(f, col);
     }
 }
