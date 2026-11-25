@@ -24,6 +24,9 @@ adb shell wm density >> $OUT/device.txt
 adb shell getprop ro.build.version.sdk >> $OUT/device.txt
 
 shot() { adb exec-out screencap -p > "$OUT/$1.png"; }
+adb logcat -c
+(adb logcat -v time > $OUT/logcat-all.txt 2>&1 &)
+rm -f old.apk
 
 # ---- 1) 迁移测试：先装旧版（WebView 版）玩一局，再覆盖安装新版 ----
 if [ -f old.apk ]; then
@@ -66,7 +69,7 @@ adb shell input keyevent KEYCODE_BACK
 sleep 1
 
 # ---- 3) 各个场景（状态冻结在某一帧，方便检查画面） ----
-for s in hud items dragon dragon-end life luck revive settings scores play spring tramp prop jet wings dark glide shield monsters dead pause over 2d-play 2d-wings 2d-dark 2d-jet dragon2 2d-dragon2; do
+for s in hud items luck dragon life; do
   adb shell am force-stop $PKG
   adb shell am start -n $ACT --es scene $s
   sleep 9
