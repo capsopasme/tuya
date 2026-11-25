@@ -432,7 +432,7 @@ final class Art {
         if (cloakGrad == null) {
             cloakGrad = Grad.linear(0, -14, 0, 17, new int[]{0xff353d7a, 0xff1a1f45, 0xff0b0d1c}, new float[]{0, 0.45f, 1});
             cloakLiningGrad = Grad.linear(0, -10, 0, 16, 0xff1c2766, 0xff4560e0);
-            cloakAura = Grad.radial(0, 0, 1, new int[]{0x8cbfe0ff, 0x402b3266, 0x002b3266}, new float[]{0.05f, 0.55f, 1});
+            cloakAura = Grad.radial(0, 0, 1, new int[]{0x8cbfe0ff, 0x3d5b7cff, 0x005b7cff}, new float[]{0.05f, 0.55f, 1});
         }
         float bob = (float) Math.sin(t * 2.6f + x * 0.05f) * 2.2f;
         float cy = y - 20 + bob;
