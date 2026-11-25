@@ -23,13 +23,28 @@ final class Sprites {
         int bw, bh;
     }
 
-    // 粒子形状（只有透明度的贴图，画的时候用画笔颜色上色）：一份填色蒙版 + 一份墨线
+    // 粒子形状：一份白色填色贴图（画的时候用颜色滤镜上色）+ 一份墨线贴图
     static final int SH_STAR = 0, SH_HEART = 1, SH_LEAF = 2, SH_SHARD = 3;
     /** 做贴图时的参考尺寸（Scene 里粒子的 sz 除以它就是缩放倍数） */
     static final float SH_R = 6;
     private final Sp[] shFill = new Sp[4], shInk = new Sp[4];
     private final Matrix sm = new Matrix();
     final Paint tint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    // 按颜色缓存的上色滤镜（粒子颜色都来自几张固定的色表，几十种以内）
+    private final int[] tintKey = new int[64];
+    private final android.graphics.ColorFilter[] tintVal = new android.graphics.ColorFilter[64];
+    private int tintN;
+
+    private android.graphics.ColorFilter tintFor(int rgb) {
+        rgb |= 0xff000000;
+        for (int i = 0; i < tintN; i++) if (tintKey[i] == rgb) return tintVal[i];
+        android.graphics.ColorFilter f = new android.graphics.PorterDuffColorFilter(rgb, android.graphics.PorterDuff.Mode.SRC_IN);
+        if (tintN < tintKey.length) {
+            tintKey[tintN] = rgb;
+            tintVal[tintN++] = f;
+        }
+        return f;
+    }
 
     // HUD 图标
     private Sp hudHeart, hudLuck;
@@ -62,8 +77,8 @@ final class Sprites {
         for (int t = 0; t < 4; t++) {
             final int kind = t;
             float m = SH_R * 2.6f;
-            shFill[t] = makeAlpha(-m, -m, 2 * m, 2 * m, () -> shapePath(kind, true));
-            shInk[t] = makeAlpha(-m, -m, 2 * m, 2 * m, () -> shapePath(kind, false));
+            shFill[t] = makeMip(-m, -m, 2 * m, 2 * m, () -> shapePath(kind, true));
+            shInk[t] = makeMip(-m, -m, 2 * m, 2 * m, () -> shapePath(kind, false));
         }
         hudHeart = make(-10, -11, 20, 21, () -> Art.lifeIcon(pen, 0, 0, 7.5f));
         hudLuck = make(-15, -20, 30, 34, () -> Art.luckFruit(pen, 9));
@@ -153,21 +168,19 @@ final class Sprites {
             lw = 1;
         }
         if (fill) pen.fill(path, 0xffffffff);
-        else pen.stroke(path, 0xffffffff, lw);
+        else pen.stroke(path, Pen.INK, lw);
     }
 
-    private Sp makeAlpha(float x0, float y0, float w, float h, Runnable draw) {
+    /** 普通 RGBA 贴图 + mipmap（粒子经常缩得很小，用 mipmap 采样才不闪），启动时上传一次 GPU */
+    private Sp makeMip(float x0, float y0, float w, float h, Runnable draw) {
         Sp s = make0(x0, y0, w, h, draw);
-        Bitmap a = s.b.extractAlpha();
-        s.b.recycle();
-        a.setHasMipMap(true); // 粒子经常缩得很小，用 mipmap 采样才不闪
-        a.prepareToDraw();
-        s.b = a;
+        s.b.setHasMipMap(true);
+        s.b.prepareToDraw();
         return s;
     }
 
     /**
-     * 粒子：中心 (x, y)，scale 倍（相对 SH_R），转 rotDeg 度。fill = 填色（含透明度），ink = 墨线颜色（含透明度，0 = 不画）
+     * 粒子：中心 (x, y)，scale 倍（相对 SH_R），转 rotDeg 度。fill = 填色（含透明度），ink = 墨线的透明度（墨色固定，只看最高 8 位，0 = 不画）
      */
     void shape(Canvas c, int kind, float x, float y, float scale, float rotDeg, int fill, int ink) {
         Sp f = shFill[kind];
@@ -176,11 +189,13 @@ final class Sprites {
         if (rotDeg != 0) sm.postRotate(rotDeg);
         sm.postTranslate(x, y);
         if ((fill >>> 24) != 0) {
-            tint.setColor(fill);
+            tint.setColorFilter(tintFor(fill));
+            tint.setAlpha(fill >>> 24);
             c.drawBitmap(f.b, sm, tint);
         }
         if ((ink >>> 24) != 0) {
-            tint.setColor(ink);
+            tint.setColorFilter(null);
+            tint.setAlpha(ink >>> 24);
             c.drawBitmap(shInk[kind].b, sm, tint);
         }
     }
