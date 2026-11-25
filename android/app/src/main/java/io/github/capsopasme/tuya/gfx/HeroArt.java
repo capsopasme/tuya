@@ -186,9 +186,9 @@ public final class HeroArt {
 
     // ---------- 飞翼：两只大翅膀长在背后 ----------
     private RadialGradient wingGlowGold, wingGlowDark;
-    private final RadialGradient[] shieldGrad = new RadialGradient[4];
-    private static final int[] SHIELD_EDGE = {0x73ffe278, 0x73a050ff, 0x80ff6e96, 0x80ff6a2a};
-    private static final int[] SHIELD_DASH = {0xe6f0be32, 0xf2be82ff, 0xf2ff7aa0, 0xf2ffb04a};
+    private final RadialGradient[] shieldGrad = new RadialGradient[5];
+    private static final int[] SHIELD_EDGE = {0x73ffe278, 0x73a050ff, 0x80ff6e96, 0x80ff6a2a, 0x80a8d0ff};
+    private static final int[] SHIELD_DASH = {0xe6f0be32, 0xf2be82ff, 0xf2ff7aa0, 0xf2ffb04a, 0xf2e8f4ff};
     private static final DashPathEffect DASH_RING = new DashPathEffect(new float[]{5, 7}, 0);
     private static final DashPathEffect DASH_SHIELD = new DashPathEffect(new float[]{7, 5}, 0);
 
@@ -246,6 +246,8 @@ public final class HeroArt {
         }
     }
 
+    private static final int[] DARK_COMET = {0xc77dff, 0xff6eeb, 0x7df0ff};
+
     /** 紫黑飞翼：三颗拖着尾巴的小彗星绕着旋转的小海星转 */
     void darkFront(Hero d, Geom g) {
         Canvas c = p.c;
@@ -254,7 +256,7 @@ public final class HeroArt {
         c.save();
         c.translate(0, g.by);
         c.rotate(deg(-0.35f));
-        int[] cols = {0xc77dff, 0xff6eeb, 0x7df0ff};
+        int[] cols = DARK_COMET;
         for (int i = 0; i < 3; i++) {
             float a0 = t * 6.5f + (i * TAU) / 3;
             float depth = (float) Math.sin(a0);
@@ -281,7 +283,7 @@ public final class HeroArt {
         float fade = clamp((float) d.shield / 0.4f, 0, 1);
         float blink = d.shield < 0.6 ? 0.5f + 0.5f * (float) Math.sin(t * 40) : 0.75f + 0.25f * (float) Math.sin(t * 10);
         float r = 36 + (float) Math.sin(t * 8) * 1.5f;
-        int kind = Math.max(0, Math.min(3, d.shieldKind));
+        int kind = Math.max(0, Math.min(SHIELD_EDGE.length - 1, d.shieldKind));
         float ga0 = p.ga;
         p.ga = ga0 * fade * blink;
         RadialGradient gr = shieldGrad[kind];

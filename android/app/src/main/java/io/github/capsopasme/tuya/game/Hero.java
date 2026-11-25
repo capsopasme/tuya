@@ -4,14 +4,14 @@ package io.github.capsopasme.tuya.game;
 public final class Hero {
     // 状态
     public static final int NORMAL = 0, PROPELLER = 1, JETPACK = 2, WINGS = 3, DARKWINGS = 4,
-            DEAD = 5, BLACKHOLE = 6, ABDUCTED = 7, FELL = 8, GONE = 9, DRAGON = 10;
+            DEAD = 5, BLACKHOLE = 6, ABDUCTED = 7, FELL = 8, GONE = 9, DRAGON = 10, CLOAK = 11;
     // 慢落的颜色
-    public static final int GL_GOLD = 0, GL_DARK = 1, GL_SKY = 2, GL_FIRE = 3, GL_LIFE = 4;
+    public static final int GL_GOLD = 0, GL_DARK = 1, GL_SKY = 2, GL_FIRE = 3, GL_LIFE = 4, GL_MOON = 5;
     // 护盾的颜色
-    public static final int SHIELD_GOLD = 0, SHIELD_DARK = 1, SHIELD_LIFE = 2, SHIELD_FIRE = 3;
+    public static final int SHIELD_GOLD = 0, SHIELD_DARK = 1, SHIELD_LIFE = 2, SHIELD_FIRE = 3, SHIELD_MOON = 4;
 
     public static boolean flying(int st) {
-        return (st >= PROPELLER && st <= DARKWINGS) || st == DRAGON;
+        return (st >= PROPELLER && st <= DARKWINGS) || st == DRAGON || st == CLOAK;
     }
 
     public static boolean winged(int st) {

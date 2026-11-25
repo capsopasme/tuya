@@ -8,7 +8,7 @@ public final class Entities {
     public static final int P_NORMAL = 0, P_MOVING = 1, P_BROWN = 2, P_WHITE = 3;
     // 道具类型
     public static final int I_SPRING = 0, I_TRAMP = 1, I_PROP = 2, I_JET = 3, I_WINGS = 4, I_DARK = 5,
-            I_LIFE = 6, I_LUCK = 7, I_DRAGON = 8;
+            I_LIFE = 6, I_LUCK = 7, I_DRAGON = 8, I_CLOAK = 9;
     // 怪物
     public static final int M_BLOB = 0, M_FLYER = 1, M_UFO = 2;
 
@@ -22,6 +22,7 @@ public final class Entities {
             {26, 28}, // 生命果实
             {26, 28}, // 幸运果实
             {30, 40}, // 变身药剂
+            {34, 36}, // 暗夜斗篷
     };
 
     /** 悬浮在平台上方、碰到就拿走的道具 */

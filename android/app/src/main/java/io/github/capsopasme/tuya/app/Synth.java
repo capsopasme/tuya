@@ -194,6 +194,24 @@ final class Synth {
                 }
                 break;
             }
+            case Snd.CLOAK: {
+                // 一声低沉的钟 + 一阵往上卷的风，接五声音阶的拨弦（像古琴泛音）往上走
+                tone(SINE, 98, 92, 1.1, 0.32, 0);
+                tone(SINE, 196, 190, 0.8, 0.12, 0);
+                noise(0.55, 0.16, 900, 0);
+                tone(SINE, 300, 1400, 0.45, 0.06, 0.05);
+                double[] notes = {587, 659, 784, 880, 1175, 1319};
+                for (int i = 0; i < notes.length; i++) {
+                    tone(TRIANGLE, notes[i], notes[i] * 0.995, 0.32, 0.16, 0.12 + i * 0.07);
+                    tone(SINE, notes[i] * 2, notes[i] * 2, 0.25, 0.05, 0.13 + i * 0.07);
+                }
+                break;
+            }
+            case Snd.WHOOSH:
+                // 飞遁时轻轻的风声
+                noise(0.3, 0.09, 520, 0);
+                tone(SINE, 140, 90, 0.25, 0.04, 0);
+                break;
             case Snd.DARKFLAP:
                 noise(0.18, 0.2, 480, 0);
                 tone(SINE, 110, 55, 0.18, 0.1, 0);

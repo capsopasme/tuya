@@ -3,10 +3,17 @@ package io.github.capsopasme.tuya.app;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Point;
+import android.graphics.Rect;
 import android.util.Log;
 import android.view.Choreographer;
+import android.view.DisplayCutout;
 import android.view.MotionEvent;
+import android.view.RoundedCorner;
 import android.view.View;
+import android.view.WindowInsets;
+
+import java.util.List;
 
 import java.util.Locale;
 
@@ -114,9 +121,53 @@ final class GameView extends View implements Choreographer.FrameCallback {
         dirtyUntil = System.nanoTime() + 900_000_000L;
     }
 
+    // ---------- 挖孔 / 圆角：HUD 要避开 ----------
+    @Override
+    public WindowInsets onApplyWindowInsets(WindowInsets in) {
+        readInsets(in);
+        return super.onApplyWindowInsets(in);
+    }
+
+    private void readInsets(WindowInsets in) {
+        if (in == null) return;
+        int[] loc = new int[2];
+        getLocationInWindow(loc);
+        float[] cuts = new float[0];
+        DisplayCutout dc = in.getDisplayCutout();
+        if (dc != null) {
+            List<Rect> rs = dc.getBoundingRects();
+            cuts = new float[rs.size() * 4];
+            for (int i = 0; i < rs.size(); i++) {
+                Rect r = rs.get(i);
+                cuts[i * 4] = r.left - loc[0];
+                cuts[i * 4 + 1] = r.top - loc[1];
+                cuts[i * 4 + 2] = r.right - loc[0];
+                cuts[i * 4 + 3] = r.bottom - loc[1];
+            }
+        }
+        float[] corners = new float[6];
+        RoundedCorner tl = in.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT);
+        RoundedCorner tr = in.getRoundedCorner(RoundedCorner.POSITION_TOP_RIGHT);
+        if (tl != null && tl.getRadius() > 0) {
+            Point c = tl.getCenter();
+            corners[0] = c.x - loc[0];
+            corners[1] = c.y - loc[1];
+            corners[2] = tl.getRadius();
+        }
+        if (tr != null && tr.getRadius() > 0) {
+            Point c = tr.getCenter();
+            corners[3] = c.x - loc[0];
+            corners[4] = c.y - loc[1];
+            corners[5] = tr.getRadius();
+        }
+        scene.setInsets(cuts, corners);
+        poke();
+    }
+
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         scene.resize(w, h);
+        readInsets(getRootWindowInsets());
         game.H = scene.v.H;
         ui.layoutDirty = true;
         ui.layout();
@@ -321,6 +372,7 @@ final class GameView extends View implements Choreographer.FrameCallback {
             ui.draw(c, game.score, newBest);
         } else {
             ui.draw(c, game.score, newBest);
+            if (s == Ui.MENU) scene.warm(c);
         }
         cpuNs += System.nanoTime() - t0;
     }
@@ -379,7 +431,7 @@ final class GameView extends View implements Choreographer.FrameCallback {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
                 if (ui.screen == Ui.PLAY) {
-                    if (x > C.W - 52 && y < 40) pausePointer = pid;
+                    if (Math.abs(x - scene.pauseCx) < 28 && y < 40) pausePointer = pid;
                     else game.shootAt(x, y); // 点击只负责射击，移动完全靠倾斜
                 } else if (act == MotionEvent.ACTION_DOWN) {
                     ui.pressed = ui.hit(x, y);
@@ -396,7 +448,7 @@ final class GameView extends View implements Choreographer.FrameCallback {
                 if (ui.screen == Ui.PLAY) {
                     if (pausePointer == pid) {
                         pausePointer = -1;
-                        if (x > C.W - 52 && y < 40) pause();
+                        if (Math.abs(x - scene.pauseCx) < 28 && y < 40) pause();
                     }
                 } else if (act == MotionEvent.ACTION_UP) {
                     int id = ui.pressed;
@@ -505,6 +557,30 @@ final class GameView extends View implements Choreographer.FrameCallback {
                 game.debugGive(Entities.I_DRAGON);
                 steps(C.DRAGON_T + 0.15);
                 break;
+            case "cloak":
+                // 披上暗夜斗篷的一瞬间（墨晕化开、月白光柱）
+                fastForward(4);
+                game.debugGive(Entities.I_CLOAK);
+                steps(0.25);
+                break;
+            case "cloak2":
+            case "cloak3": {
+                // 飞遁中左右摆动：尾迹拖出一层层的曲线（cloak3 换一种摆法）
+                fastForward(4);
+                game.debugGive(Entities.I_CLOAK);
+                boolean b3 = s.equals("cloak3");
+                for (int i = 0; i < (int) (2.2 / STEP); i++) {
+                    double tt = i * STEP;
+                    double ax = b3 ? (tt % 1.1 < 0.55 ? 1 : -1) : Math.sin(tt * 4.2);
+                    game.update(STEP, ax);
+                }
+                break;
+            }
+            case "cloak-end":
+                fastForward(4);
+                game.debugGive(Entities.I_CLOAK);
+                steps(C.CLOAK_T + 0.12);
+                break;
             case "life":
                 fastForward(4);
                 game.debugGive(Entities.I_LIFE);
@@ -532,20 +608,31 @@ final class GameView extends View implements Choreographer.FrameCallback {
                 // 三种新道具摆在眼前的平台上
                 fastForward(3);
                 double cy = game.camY;
-                int[] types = {Entities.I_LIFE, Entities.I_LUCK, Entities.I_DRAGON};
-                double[] xs = {60, 160, 260};
-                for (int i = 0; i < 3; i++) {
-                    Entities.Platform p = game.addPlatform(Entities.P_NORMAL, xs[i], cy + 150 + (i == 1 ? 60 : 0));
+                int[] types = {Entities.I_LIFE, Entities.I_LUCK, Entities.I_DRAGON, Entities.I_CLOAK};
+                double[] xs = {50, 125, 200, 275};
+                for (int i = 0; i < 4; i++) {
+                    Entities.Platform p = game.addPlatform(Entities.P_NORMAL, xs[i], cy + 150 + (i % 2 == 1 ? 60 : 0));
                     p.vx = 0;
                     p.item = new Entities.Item(types[i], 0);
                 }
                 game.lives = 2;
                 game.luck = true;
-                game.luckEndY = game.dd.y - 3000;
+                game.luckLeftT = C.LUCK_T * 0.6;
                 game.dd.y = cy + game.H - 60;
                 game.dd.vy = -200;
                 game.dd.x = 200;
                 steps(0.02);
+                break;
+            }
+            case "hud": {
+                // 顶栏挤满：大分数 + 7 条命 + 幸运果实 + 畅快标签（配合模拟器的挖孔检查有没有交叠）
+                fastForward(4);
+                game.chill = true;
+                game.lives = 7;
+                game.debugGive(Entities.I_LUCK);
+                steps(0.6);
+                game.luckLeftT = C.LUCK_T * 0.5;
+                game.score = 1234567;
                 break;
             }
             case "glide":

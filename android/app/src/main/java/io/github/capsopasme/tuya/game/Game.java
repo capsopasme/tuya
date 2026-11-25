@@ -51,9 +51,9 @@ public final class Game {
     // 生命果实：剩余的复活机会；reviveT / lifeT 是 HUD 上的动画计时
     public int lives;
     public double reviveT = 99, lifeT = 99;
-    // 幸运果实：生效时，高度在 luckEndY 以下（y 更大）的新关卡行里基础道具变少、传说道具变多
+    // 幸运果实：生效的 C.LUCK_T 秒内，新生成的关卡行里基础道具变少、传说道具变多。luckLeftT = 剩余秒数
     public boolean luck;
-    public double luckEndY, luckT = 99;
+    public double luckLeftT, luckT = 99;
     double breathCd, roarCd;
 
     // 射击队列（点击屏幕时加入，下一步物理里处理）
@@ -102,11 +102,15 @@ public final class Game {
         camY = 0;
         maxH = 0;
         score = 0;
+        platPool.addAll(platforms);
         platforms.clear();
         monsters.clear();
         holes.clear();
+        bulletPool.addAll(bullets);
         bullets.clear();
+        debrisPool.addAll(debris);
         debris.clear();
+        sparkPool.addAll(sparks);
         sparks.clear();
         for (int i = 0; i < fx.size(); i++) fxPool.add(fx.get(i));
         fx.clear();
@@ -117,7 +121,9 @@ public final class Game {
         lives = 0;
         reviveT = lifeT = luckT = 99;
         luck = false;
-        luckEndY = 0;
+        luckLeftT = 0;
+        cometN = 0;
+        cometNew = -1;
         breathCd = roarCd = 0;
         double baseY = H - 56;
         startY = baseY;
@@ -146,9 +152,35 @@ public final class Game {
         return clamp(sc / 12000, 0, 1);
     }
 
+    // 对象池：平台、子弹、碎片、火星移出列表时放回来，游戏过程中不再新建
+    private final ArrayList<Platform> platPool = new ArrayList<>(64);
+    private final ArrayList<Bullet> bulletPool = new ArrayList<>(32);
+    private final ArrayList<Debris> debrisPool = new ArrayList<>(16);
+    private final ArrayList<Spark> sparkPool = new ArrayList<>(32);
+
+    private static <T> T take(ArrayList<T> pool) {
+        int n = pool.size();
+        return n > 0 ? pool.remove(n - 1) : null;
+    }
+
+    Bullet newBullet() {
+        Bullet b = take(bulletPool);
+        if (b == null) b = new Bullet();
+        b.x = b.y = b.vx = b.vy = b.life = b.px = b.py = 0;
+        b.fire = false;
+        return b;
+    }
+
     public Platform addPlatform(int type, double x, double y) {
-        Platform p = new Platform();
+        Platform p = take(platPool);
+        if (p == null) p = new Platform();
+        p.w = C.PLAT_W;
+        p.h = C.PLAT_H;
+        p.vx = p.fade = p.dip = p.dipV = 0;
+        p.dead = false;
+        p.item = null;
         p.type = type;
+        p.px = x;
         p.x = x;
         p.y = y;
         if (type == P_MOVING) {
@@ -241,36 +273,39 @@ public final class Game {
         // 道具
         if (type == P_NORMAL || type == P_MOVING) {
             double r2 = rng.next();
-            double pdr, pd, pw, pl, pk, pj, pp, pt, ps;
+            double pdr, pc, pd, pw, pl, pk, pj, pp, pt, ps;
             boolean lucky = luckAt(y);
-            // 幸运果实：传说道具（飞龙、紫黑飞翼、飞翼）出现的门槛减半、概率翻好几倍，基础道具大幅减少
+            // 幸运果实：传说道具（飞龙、暗夜斗篷、紫黑飞翼、飞翼）出现的门槛减半、概率翻好几倍，基础道具大幅减少
             double th = lucky ? 0.5 : 1;
             if (chill) {
-                pdr = sc > C.CHILL_DRAGON[0] * th ? C.CHILL_DRAGON[1] : 0;
-                pl = sc > C.CHILL_LIFE[0] * th ? C.CHILL_LIFE[1] : 0;
-                pk = sc > C.CHILL_LUCK[0] ? C.CHILL_LUCK[1] : 0;
-                pd = sc > C.CHILL_DARK[0] * th ? C.CHILL_DARK[1] : 0;
-                pw = sc > C.CHILL_WINGS[0] * th ? C.CHILL_WINGS[1] : 0;
-                pj = sc > C.CHILL_JET[0] ? C.CHILL_JET[1] : 0;
+                pdr = itemP(sc, C.CHILL_DRAGON[0] * th, C.CHILL_DRAGON[1], C.LATE_HALF);
+                pc = itemP(sc, C.CHILL_CLOAK[0] * th, C.CHILL_CLOAK[1], C.LATE_HALF);
+                pl = itemP(sc, C.CHILL_LIFE[0] * th, C.CHILL_LIFE[1], C.LATE_HALF_LIFE);
+                pk = itemP(sc, C.CHILL_LUCK[0], C.CHILL_LUCK[1], C.LATE_HALF_LUCK);
+                pd = itemP(sc, C.CHILL_DARK[0] * th, C.CHILL_DARK[1], C.LATE_HALF);
+                pw = itemP(sc, C.CHILL_WINGS[0] * th, C.CHILL_WINGS[1], C.LATE_HALF);
+                pj = itemP(sc, C.CHILL_JET[0], C.CHILL_JET[1], C.LATE_HALF_JET);
                 pp = sc > C.CHILL_PROP[0] ? C.CHILL_PROP[1] : 0;
                 pt = sc > C.CHILL_TRAMP[0] ? C.CHILL_TRAMP[1] : 0;
                 ps = sc > C.CHILL_SPRING[0] ? C.CHILL_SPRING[1] : 0;
             } else {
-                pdr = sc > 7000 * th ? 0.0016 : 0; // 变身药剂：7000 分以后才会出现，最稀有
-                pl = sc > 1500 * th ? 0.0018 : 0; // 生命果实
-                pk = sc > 600 ? 0.0028 : 0; // 幸运果实
-                pd = sc > 5000 * th ? 0.0025 : 0; // 紫黑飞翼：5000 分以后才会出现
-                pw = sc > 3500 * th ? 0.0035 : 0; // 飞翼：3500 分以后才会出现
-                pj = sc > 2500 ? 0.006 : 0;
+                pdr = itemP(sc, 7000 * th, 0.0016, C.LATE_HALF); // 变身药剂：7000 分以后才会出现，最稀有
+                pc = itemP(sc, 6000 * th, 0.0019, C.LATE_HALF); // 暗夜斗篷：6000 分以后
+                pl = itemP(sc, 2500 * th, 0.0005, C.LATE_HALF_LIFE); // 生命果实：很稀有
+                pk = itemP(sc, 600, 0.0028, C.LATE_HALF_LUCK); // 幸运果实
+                pd = itemP(sc, 5000 * th, 0.0025, C.LATE_HALF); // 紫黑飞翼：5000 分以后才会出现
+                pw = itemP(sc, 3500 * th, 0.0035, C.LATE_HALF); // 飞翼：3500 分以后才会出现
+                pj = itemP(sc, 2500, 0.006, C.LATE_HALF_JET);
                 pp = sc > 1200 ? 0.012 : 0;
                 pt = sc > 700 ? 0.016 : 0;
                 ps = 0.06;
             }
             if (lucky) {
                 pdr *= 6;
+                pc *= 5;
                 pd *= 5;
                 pw *= 5;
-                pl *= 3;
+                pl *= 1.5;
                 pk = 0;
                 pj *= 1.6;
                 pp *= 0.3;
@@ -280,6 +315,7 @@ public final class Game {
             int it = -1;
             double acc = 0;
             if (r2 < (acc += pdr)) it = I_DRAGON;
+            else if (r2 < (acc += pc)) it = I_CLOAK;
             else if (r2 < (acc += pd)) it = I_DARK;
             else if (r2 < (acc += pw)) it = I_WINGS;
             else if (r2 < (acc += pl)) it = I_LIFE;
@@ -309,15 +345,21 @@ public final class Game {
         lastX = x;
     }
 
-    /** 这一行（世界坐标 y）生成时幸运果实是否生效 */
-    public boolean luckAt(double y) {
-        return luck && y > luckEndY;
+    /** 道具概率：分数没到 from 时为 0；到了以后是 p，越往后越低（见 C.LATE_HALF） */
+    static double itemP(double sc, double from, double p, double half) {
+        if (sc <= from) return 0;
+        return p * Math.max(C.LATE_FLOOR, 1 / (1 + (sc - from) / half));
     }
 
-    /** 幸运果实剩余的比例（HUD 进度条用），没有生效时为 0 */
+    /** 这一行（世界坐标 y）生成时幸运果实是否生效 */
+    public boolean luckAt(double y) {
+        return luck;
+    }
+
+    /** 幸运果实剩余的比例（HUD 用），没有生效时为 0 */
     public double luckLeft() {
         if (!luck) return 0;
-        return clamp((dd.y - luckEndY) / (C.LUCK_DIST * 2), 0, 1);
+        return clamp(luckLeftT / C.LUCK_T, 0, 1);
     }
 
     // ---------- 主循环 ----------
@@ -374,9 +416,13 @@ public final class Game {
         reviveT += dt;
         lifeT += dt;
         luckT += dt;
-        if (luck && d.y < luckEndY) {
-            luck = false;
-            luckT = 0;
+        if (luck) {
+            luckLeftT -= dt;
+            if (luckLeftT <= 0) {
+                luck = false;
+                luckLeftT = 0;
+                luckT = 0;
+            }
         }
         int st = d.state;
         boolean fly = flying(st);
@@ -386,9 +432,9 @@ public final class Game {
 
         // 水平方向
         if (st == NORMAL || fly) {
-            double vk = st == WINGS ? C.WING_VX : st == DARKWINGS ? C.DARK_VX : st == DRAGON ? C.DRAGON_VX : 1;
+            double vk = st == WINGS ? C.WING_VX : st == DARKWINGS ? C.DARK_VX : st == DRAGON ? C.DRAGON_VX : st == CLOAK ? C.CLOAK_VX : 1;
             double target = axis * C.MAX_VX * vk;
-            double a = C.ACCEL * vk * dt;
+            double a = C.ACCEL * vk * (st == CLOAK ? C.CLOAK_ACCEL : 1) * dt;
             d.vx += clamp(target - d.vx, -a, a);
             if (Math.abs(d.vx) > 20) d.facing = d.vx > 0 ? 1 : -1;
             d.x += d.vx * dt;
@@ -415,23 +461,24 @@ public final class Game {
             boolean prop = st == PROPELLER;
             boolean dark = st == DARKWINGS;
             boolean dragon = st == DRAGON;
+            boolean cloak = st == CLOAK;
             boolean wings = winged(st);
-            double T = prop ? C.PROP_T : dragon ? C.DRAGON_T : dark ? C.DARK_T : wings ? C.WING_T : C.JET_T;
-            double V = prop ? C.PROP_V : dragon ? C.DRAGON_V : dark ? C.DARK_V : wings ? C.WING_V : C.JET_V;
-            double ramp = wings || dragon ? 1 : 0.7; // 最后这段时间慢慢减速
+            double T = prop ? C.PROP_T : dragon ? C.DRAGON_T : cloak ? C.CLOAK_T : dark ? C.DARK_T : wings ? C.WING_T : C.JET_T;
+            double V = prop ? C.PROP_V : dragon ? C.DRAGON_V : cloak ? C.CLOAK_V : dark ? C.DARK_V : wings ? C.WING_V : C.JET_V;
+            double ramp = wings || dragon || cloak ? 1 : 0.7; // 最后这段时间慢慢减速
             double left = T - d.stateT;
             double tv = -(left > ramp ? V : lerp(250, V, Math.max(0, left) / ramp));
             if (dragon && d.stateT < C.DRAGON_HOVER) tv = -160;
-            double acc = dragon ? 5600 : dark ? 4600 : wings ? 3600 : 2600;
+            double acc = dragon ? 5600 : cloak ? 5200 : dark ? 4600 : wings ? 3600 : 2600;
             d.vy += clamp(tv - d.vy, -acc * dt, acc * dt);
             d.y += d.vy * dt;
             whirT -= dt;
             if (whirT <= 0) {
-                whirT = dragon ? 0.26 : dark ? 0.17 : wings ? 0.2 : 0.16;
-                sfx(prop ? Snd.PROP : dragon ? Snd.DRAGONFLAP : dark ? Snd.DARKFLAP : wings ? Snd.FLAP : Snd.JET);
+                whirT = dragon ? 0.26 : cloak ? 0.34 : dark ? 0.17 : wings ? 0.2 : 0.16;
+                sfx(prop ? Snd.PROP : dragon ? Snd.DRAGONFLAP : cloak ? Snd.WHOOSH : dark ? Snd.DARKFLAP : wings ? Snd.FLAP : Snd.JET);
             }
             if (wings) ghostT = Math.max(ghostT, 0.05);
-            if (wings || dragon) smash();
+            if (wings || dragon || cloak) smash();
             if (dragon) dragonBreath(dt, left);
             if (left <= 0) {
                 d.state = NORMAL;
@@ -443,6 +490,13 @@ public final class Game {
                     bounce(C.JUMP_V * 1.3, 2);
                     dragonEndFx();
                     sfx(Snd.BOOM);
+                } else if (cloak) {
+                    // 遁光散去：一圈墨晕 + 月白色的冲击波，小海星重新现身，带一段月光护盾
+                    d.shield = C.CLOAK_SHIELD_T;
+                    d.shieldKind = SHIELD_MOON;
+                    bounce(C.JUMP_V * 1.2, 1.8);
+                    cloakEndFx();
+                    sfx(Snd.CLOAK);
                 } else if (wings) {
                     // 收翅膀前最后用力扇一下，再给一小段护盾
                     d.shield = C.SHIELD_T;
@@ -454,7 +508,7 @@ public final class Game {
                 }
                 // 道具用完：接下来的下落是慢慢飘下来的
                 d.glide = C.GLIDE_T;
-                d.glideCol = dark ? GL_DARK : wings ? GL_GOLD : prop ? GL_SKY : GL_FIRE;
+                d.glideCol = cloak ? GL_MOON : dark ? GL_DARK : wings ? GL_GOLD : prop ? GL_SKY : GL_FIRE;
             }
         } else if (st == DEAD) {
             d.vy = Math.min(d.vy + C.GRAVITY * dt, 1300);
@@ -479,6 +533,7 @@ public final class Game {
             else if (d.x >= W) d.x -= W;
         }
 
+        recordComet();
         trailFx(dt);
 
         if (d.state == NORMAL || flying(d.state)) fruits();
@@ -735,7 +790,7 @@ public final class Game {
     }
 
     void addGhost() {
-        if (dd.state == DRAGON) return;
+        if (dd.state == DRAGON || dd.state == CLOAK) return;
         Fx f = newFx(Fx.GHOST);
         f.d.copyFrom(dd);
         f.x = dd.x;
@@ -774,18 +829,31 @@ public final class Game {
             dragonBlastFx(x, y, 0);
             return;
         }
+        if (dd.state == CLOAK) {
+            // 彗星撞上去：一团墨炸开，外面一圈月白色细环
+            for (int i = 0; i < 7; i++) {
+                double a = rnd() * TAU, sp = 80 + rnd() * 160;
+                ink(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 10 + rnd() * 10, INK_COLS[i % 3], 0.5 + rnd() * 0.3, 0.55 + rnd() * 0.3, 0);
+            }
+            shockwave(x, y, 420, 3, 0xd8ecff, 1, 0.32, 0);
+            shockwave(x, y, 300, 6, 0x1b1f3a, 1, 0.4, 0.02);
+            burst(x, y, 12, 0, 0, TAU, 140, 400, 300, 1.4, 2.5, 5.5, 0.4, 0.7, 10, SH_SD, MOON_COLS);
+            popText(x, y - 26, "破!", 26, 0x1b1f3a, 0, 0.8);
+            shake = Math.max(shake, 5);
+            return;
+        }
         if (dd.state == DARKWINGS) {
             shockwave(x, y, 480, 6, 0xaa5aff, 1, 0.38, 0);
             shockwave(x, y, 340, 2.5, 0x7df0ff, 1, 0.3, 0.04);
             glow(x, y, 56, 0xbe78ff, 0.22, 0);
-            burst(x, y, 14, 0, 0, TAU, 140, 420, 600, 1.3, 3.5, 6.5, 0.4, 0.7, 10, SH_SD, new int[]{0xc77dff, 0xff6ef0, 0x7df9ff, 0xffffff});
+            burst(x, y, 14, 0, 0, TAU, 140, 420, 600, 1.3, 3.5, 6.5, 0.4, 0.7, 10, SH_SD, FXC11);
             popText(x, y - 26, "POW!", 24, 0xc77dff, 0, 0.8);
             shake = Math.max(shake, 6);
             return;
         }
         shockwave(x, y, 420, 5, 0xffd65c, 1, 0.36, 0);
         glow(x, y, 50, 0xfff0aa, 0.2, 0);
-        burst(x, y, 12, 0, 0, TAU, 120, 380, 700, 1.2, 3.5, 6.5, 0.4, 0.7, 10, SH_SD, new int[]{0xffd93b, 0xffffff, 0xff8a5c});
+        burst(x, y, 12, 0, 0, TAU, 120, 380, 700, 1.2, 3.5, 6.5, 0.4, 0.7, 10, SH_SD, FXC12);
         popText(x, y - 26, "POW!", 24, 0xff8a3d, 0, 0.8);
         shake = Math.max(shake, 5);
     }
@@ -815,7 +883,7 @@ public final class Game {
             return;
         }
         if (type == I_LIFE) {
-            int[] cols = {0xff5c8a, 0xff9ab8, 0xffffff, 0x8fe35a};
+            int[] cols = FXC1;
             shockwave(x, y, 360, 5, 0xff6e96, 1, 0.42, 0);
             shockwave(x, y, 260, 2.5, 0xffffff, 1, 0.36, 0.05);
             glow(x, y, 70, 0xff8fb0, 0.3, 0);
@@ -828,7 +896,7 @@ public final class Game {
             return;
         }
         if (type == I_LUCK) {
-            int[] cols = {0x6fdc4a, 0xb6f783, 0xffe27a, 0xffffff, 0x7be0ff, 0xff8fd0};
+            int[] cols = FXC2;
             shockwave(x, y, 420, 5, 0x5fd14a, 1, 0.46, 0);
             shockwave(x, y, 320, 3, 0xffe27a, 1, 0.4, 0.05);
             shockwave(x, y, 240, 2, 0xffffff, 1, 0.34, 0.1);
@@ -844,7 +912,7 @@ public final class Game {
             return;
         }
         if (type == I_SPRING) {
-            int[] cols = {0xffd93b, 0xfff6a8, 0xff7a5c, 0xffffff};
+            int[] cols = FXC3;
             shockwave(x, y - 2, 400, 5, 0xffec78, 0.3, 0.4, 0);
             shockwave(x, y - 2, 300, 3, 0xffffff, 0.3, 0.34, 0.05);
             beam(x, y, 26, 150, 0xffe66e, 0.3, 0);
@@ -854,8 +922,8 @@ public final class Game {
             shake = Math.max(shake, 3.5);
             ghostT = 0.3;
         } else if (type == I_TRAMP) {
-            int[] cols = {0xff5c5c, 0xffd93b, 0xffffff, 0x7be0ff, 0xff8fd0};
-            int[] rc = {0xff5c5c, 0xffd93b, 0xffffff};
+            int[] cols = FXC4;
+            int[] rc = FXC5;
             for (int k = 0; k < 3; k++) shockwave(x, y - 2, 600 - k * 70, 7.5 - k * 1.8, rc[k], 0.3, 0.5 + k * 0.04, k * 0.06);
             beam(x, y, 46, 290, 0xffaaa0, 0.38, 0);
             glow(x, y - 14, 78, 0xffffff, 0.24, 0);
@@ -868,7 +936,7 @@ public final class Game {
             flashCol = 0xffffff;
             ghostT = 0.5;
         } else if (type == I_PROP) {
-            int[] cols = {0x7fd0ff, 0xffd93b, 0xffffff, 0xff7a7a};
+            int[] cols = FXC6;
             shockwave(x, y, 320, 4.5, 0x7fd0ff, 1, 0.4, 0);
             shockwave(x, y, 230, 3, 0xffffff, 1, 0.34, 0.06);
             glow(x, y, 54, 0xbeebff, 0.22, 0);
@@ -880,7 +948,7 @@ public final class Game {
             flashCol = 0xc8ebff;
             ghostT = 0.3;
         } else if (type == I_JET) {
-            int[] cols = {0xffb02e, 0xff6a3d, 0xfff29a, 0xffffff};
+            int[] cols = FXC7;
             shockwave(x, y + 22, 520, 7, 0xffb02e, 0.3, 0.46, 0);
             shockwave(x, y, 340, 4.5, 0xff6a3d, 1, 0.4, 0.03);
             shockwave(x, y, 250, 3, 0xffffff, 1, 0.34, 0.08);
@@ -893,9 +961,28 @@ public final class Game {
             flash = Math.max(flash, 0.26);
             flashCol = 0xffc878;
             ghostT = 0.4;
+        } else if (type == I_CLOAK) {
+            // 暗夜斗篷：一滴墨落进水里——先一圈墨晕向外化开，再一道月白色的光柱冲天，小海星化作彗星
+            double D = 0.12;
+            for (int i = 0; i < 14; i++) {
+                double a = (double) i / 14 * TAU + rnd() * 0.3, sp = 120 + rnd() * 200;
+                ink(x, y, Math.cos(a) * sp, Math.sin(a) * sp * 0.8, 12 + rnd() * 12, INK_COLS[i % 3], 0.45 + rnd() * 0.25, 0.8 + rnd() * 0.5, rnd() * 0.08);
+            }
+            glow(x, y, 70, 0x1b1f3a, 0.5, 0);
+            shockwave(x, y, 560, 12, 0x1b1f3a, 0.55, 0.6, 0);
+            shockwave(x, y, 760, 3, 0xd8ecff, 0.55, 0.5, D);
+            shockwave(x, y, 420, 2, 0x8fa8ff, 1, 0.45, D + 0.05);
+            glow(x, y, 150, 0x8fc8ff, 0.4, D);
+            beam(x, y - 40, 46, 760, 0xcfe6ff, 0.55, D);
+            rays(x, y, 16, 0, (TAU * 15) / 16, 150, 2.2, 0xd8ecff, 0.42, D);
+            burst(x, y, 22, D, 0, TAU, 160, 520, 160, 1.6, 2.5, 6, 0.6, 1.1, 10, SH_SSD, MOON_COLS);
+            popText(x, y - 58, "夜遁!!", 36, 0x1b1f3a, D, 0.9);
+            shake = Math.max(shake, 8);
+            flash = Math.max(flash, 0.3);
+            flashCol = 0xe8f2ff;
         } else if (type == I_DARK) {
             // 紫黑飞翼：先“吸”——一圈紫色星屑被吸进小海星，0.15 秒后再“炸”
-            int[] cols = {0xc77dff, 0x9d4edd, 0xff6ef0, 0x7df9ff, 0xffffff};
+            int[] cols = FXC8;
             double D = 0.15;
             for (int i = 0; i < 20; i++) {
                 double a = ((double) i / 20) * TAU + rnd() * 0.2;
@@ -928,7 +1015,7 @@ public final class Game {
             ghostT = 0.7;
         } else if (type == I_WINGS) {
             // 终极道具：金色 + 白色 + 粉色三层冲击波、巨型光柱、满天星星和羽毛、金色闪屏、狠狠一震
-            int[] cols = {0xffe27a, 0xfff6c8, 0xffffff, 0xffb3e0, 0x9be8ff};
+            int[] cols = FXC9;
             shockwave(x, y, 760, 9, 0xffd65c, 1, 0.6, 0);
             shockwave(x, y, 600, 6, 0xffffff, 1, 0.52, 0.05);
             shockwave(x, y, 470, 4, 0xffa0dc, 1, 0.46, 0.1);
@@ -957,10 +1044,89 @@ public final class Game {
             {0x9fdcff, 0xffffff, 0xffe27a}, // sky
             {0xffd27a, 0xffffff, 0xffb37a}, // fire
             {0xff8fb0, 0xffffff, 0xb6f783}, // life
+            {0xbfe4ff, 0xffffff, 0x8fa8ff}, // moon
     };
+    private static final int[] FXC1 = {0xff5c8a, 0xff9ab8, 0xffffff, 0x8fe35a};
+    private static final int[] FXC2 = {0x6fdc4a, 0xb6f783, 0xffe27a, 0xffffff, 0x7be0ff, 0xff8fd0};
+    private static final int[] FXC3 = {0xffd93b, 0xfff6a8, 0xff7a5c, 0xffffff};
+    private static final int[] FXC4 = {0xff5c5c, 0xffd93b, 0xffffff, 0x7be0ff, 0xff8fd0};
+    private static final int[] FXC5 = {0xff5c5c, 0xffd93b, 0xffffff};
+    private static final int[] FXC6 = {0x7fd0ff, 0xffd93b, 0xffffff, 0xff7a7a};
+    private static final int[] FXC7 = {0xffb02e, 0xff6a3d, 0xfff29a, 0xffffff};
+    private static final int[] FXC8 = {0xc77dff, 0x9d4edd, 0xff6ef0, 0x7df9ff, 0xffffff};
+    private static final int[] FXC9 = {0xffe27a, 0xfff6c8, 0xffffff, 0xffb3e0, 0x9be8ff};
+    private static final int[] FXC10 = {0xff5c8a, 0xff9ab8, 0xffffff, 0x8fe35a, 0xffe27a};
+    private static final int[] FXC11 = {0xc77dff, 0xff6ef0, 0x7df9ff, 0xffffff};
+    private static final int[] FXC12 = {0xffd93b, 0xffffff, 0xff8a5c};
+    private static final int[] FXC13 = {0xe8fbff, 0xbfe9ff, 0xffffff};
     private static final int[] LUCK_COLS = {0x6fdc4a, 0xb6f783, 0xffe27a, 0xffffff};
     private static final int[] SH_HEART = {Fx.S_HEART, Fx.S_HEART, Fx.S_STAR};
     private static final int[] SH_LEAF = {Fx.S_LEAF};
+    private static final int[] INK_COLS = {0x1b1f3a, 0x11142a, 0x2b3266};
+    private static final int[] MOON_COLS = {0xffffff, 0xd8ecff, 0x9fc4ff, 0xc9b8ff};
+
+    /** 一团墨晕：在纸上慢慢化开、变淡 */
+    void ink(double x, double y, double vx, double vy, double r, int col, double alpha, double life, double delay) {
+        if (fx.size() > 330) return;
+        Fx f = newFx(Fx.INK);
+        f.x = x;
+        f.y = y;
+        f.vx = vx;
+        f.vy = vy;
+        f.r = r;
+        f.col = col;
+        f.a0 = alpha;
+        f.life = life;
+        f.delay = delay;
+        addFx(f);
+    }
+
+    /** 暗夜斗篷结束：遁光散去 */
+    void cloakEndFx() {
+        double x = dd.x, y = dd.y - CENTER;
+        for (int i = 0; i < 12; i++) {
+            double a = (double) i / 12 * TAU + rnd() * 0.3, sp = 100 + rnd() * 170;
+            ink(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 10 + rnd() * 10, INK_COLS[i % 3], 0.4 + rnd() * 0.25, 0.7 + rnd() * 0.4, 0);
+        }
+        shockwave(x, y, 380, 5, 0x1b1f3a, 1, 0.45, 0);
+        shockwave(x, y, 300, 2.2, 0xd8ecff, 1, 0.38, 0.04);
+        glow(x, y, 80, 0x9fc4ff, 0.35, 0);
+        burst(x, y, 16, 0, 0, TAU, 100, 320, 200, 1.6, 2.5, 5.5, 0.5, 0.9, 10, SH_SD, MOON_COLS);
+        shake = Math.max(shake, 4);
+    }
+
+    // ---- 暗夜斗篷的彗星尾迹 ----
+    // 每一步记录一次彗星头的位置和速度（x 不折返，跨过屏幕边缘也连续），渲染层据此画出多层飘带。
+    // 环形缓冲，cometNew 是最新一个的下标；斗篷结束后不再记录，尾迹原地慢慢淡掉。
+    public static final int COMET_N = 128;
+    public final double[] cometXu = new double[COMET_N], cometY = new double[COMET_N], cometVx = new double[COMET_N],
+            cometVy = new double[COMET_N], cometT = new double[COMET_N];
+    public int cometNew = -1, cometN;
+    /** 最新一个记录点对应的真实（折返后的）x，斗篷结束后尾迹靠它定位 */
+    public double cometRawX;
+
+    void recordComet() {
+        Hero d = dd;
+        if (d.state != CLOAK) return;
+        double xu;
+        if (cometN == 0) {
+            xu = d.x;
+        } else {
+            double dx = d.x - cometRawX;
+            if (dx > W / 2) dx -= W;
+            else if (dx < -W / 2) dx += W;
+            xu = cometXu[cometNew] + dx;
+        }
+        cometNew = (cometNew + 1) % COMET_N;
+        cometXu[cometNew] = xu;
+        cometY[cometNew] = d.y - CENTER;
+        cometVx[cometNew] = d.vx;
+        cometVy[cometNew] = d.vy;
+        cometT[cometNew] = t;
+        cometRawX = d.x;
+        if (cometN < COMET_N) cometN++;
+    }
+
     private static final int[] DARK_TRAIL = {0xc77dff, 0xff6ef0, 0x7df9ff, 0xffffff, 0x9d4edd};
     private static final int[] WING_TRAIL = {0xffe27a, 0xfff6c8, 0xffffff, 0xffb3e0};
 
@@ -1000,6 +1166,18 @@ public final class Game {
         if (!flying(d.state)) return;
         trailT -= dt;
         if (trailT > 0) return;
+        if (d.state == CLOAK) {
+            // 彗星身后：墨点化开成一团团墨晕，偶尔飘出几粒月白色的星屑
+            trailT = 0.03;
+            double cy = d.y - CENTER;
+            if (rnd() < 0.55)
+                ink(d.x + (rnd() - 0.5) * 14, cy + 18 + rnd() * 30, -d.vx * 0.25 + (rnd() - 0.5) * 70, 40 + rnd() * 80,
+                        5 + rnd() * 7, INK_COLS[(int) (rnd() * 3)], 0.28 + rnd() * 0.2, 0.7 + rnd() * 0.5, 0);
+            if (rnd() < 0.5)
+                part(rnd() < 0.35 ? Fx.S_STAR : Fx.S_DOT, d.x + (rnd() - 0.5) * 20, cy + 10 + rnd() * 30, (rnd() - 0.5) * 90 - d.vx * 0.2,
+                        60 + rnd() * 120, 0, 1.4, 1.4 + rnd() * 1.8, (rnd() - 0.5) * 6, MOON_COLS[(int) (rnd() * MOON_COLS.length)], 0.5 + rnd() * 0.4);
+            return;
+        }
         if (d.state == DARKWINGS) {
             trailT = 0.024;
             int s = rnd() < 0.5 ? -1 : 1;
@@ -1082,7 +1260,7 @@ public final class Game {
     }
 
     void reviveFx(double x, double y, boolean fell, Monster m, Hole h) {
-        int[] cols = {0xff5c8a, 0xff9ab8, 0xffffff, 0x8fe35a, 0xffe27a};
+        int[] cols = FXC10;
         if (m != null) smashFx(m.x, m.y);
         if (h != null) smashFx(h.x, h.y);
         if (fell) {
@@ -1153,7 +1331,7 @@ public final class Game {
     void dragonStartFx(double x, double y) {
         double D = 0.2;
         // 玻璃碎片 + 药水溅开
-        burst(x, y, 12, 0, 0, TAU, 160, 420, 700, 1.2, 3, 5, 0.5, 0.8, 8, SH_SHARD, new int[]{0xe8fbff, 0xbfe9ff, 0xffffff});
+        burst(x, y, 12, 0, 0, TAU, 160, 420, 700, 1.2, 3, 5, 0.5, 0.8, 8, SH_SHARD, FXC13);
         burst(x, y, 10, 0, 0, TAU, 120, 300, 500, 1.6, 3, 5, 0.3, 0.5, 8, SH_FIRE, FIRE_COLS);
         // 火焰被“吸”进来
         for (int i = 0; i < 24; i++) {
@@ -1257,7 +1435,7 @@ public final class Game {
         double sp = 1800 + Math.abs(d.vy);
         double ax = wrapDx(tx, mx), ay = ty - my;
         double len = Math.max(1, Math.hypot(ax, ay));
-        Bullet b = new Bullet();
+        Bullet b = newBullet();
         b.fire = true;
         b.x = b.px = mx;
         b.y = b.py = my;
@@ -1397,7 +1575,9 @@ public final class Game {
         p.dead = true;
         p.fade = 99;
         for (int s = -1; s <= 1; s += 2) {
-            Debris q = new Debris();
+            Debris q = take(debrisPool);
+            if (q == null) q = new Debris();
+            q.rot = 0;
             q.x = p.x + (s * p.w) / 4;
             q.y = p.y;
             q.w = p.w / 2;
@@ -1428,9 +1608,11 @@ public final class Game {
     /** 拿到螺旋桨帽 / 喷气背包 / 飞翼 / 紫黑飞翼 / 变身药剂 */
     void startFlight(int type) {
         Hero d = dd;
-        d.state = type == I_PROP ? PROPELLER : type == I_JET ? JETPACK : type == I_DARK ? DARKWINGS : type == I_DRAGON ? DRAGON : WINGS;
+        d.state = type == I_PROP ? PROPELLER : type == I_JET ? JETPACK : type == I_DARK ? DARKWINGS : type == I_DRAGON ? DRAGON
+                : type == I_CLOAK ? CLOAK : WINGS;
         d.stateT = 0;
-        d.vy = Math.min(d.vy, type == I_DRAGON ? -700 : type == I_DARK ? -560 : type == I_WINGS ? -450 : -300);
+        d.vy = Math.min(d.vy, type == I_DRAGON ? -700 : type == I_CLOAK ? -900 : type == I_DARK ? -560 : type == I_WINGS ? -450 : -300);
+        if (type == I_CLOAK) cometN = 0;
         d.glide = d.glideK = d.fallK = 0;
         if (type == I_DARK) d.spinDir = d.vx < -20 ? -1 : d.vx > 20 ? 1 : (d.facing != 0 ? d.facing : 1);
         whirT = 0.3;
@@ -1438,7 +1620,7 @@ public final class Game {
         breathCd = 0.12;
         roarCd = 1.1;
         itemFx(type, d.x, d.y - CENTER);
-        sfx(type == I_DRAGON ? Snd.DRAGON : type == I_DARK ? Snd.DARKWINGS : type == I_WINGS ? Snd.WINGS : Snd.PICKUP);
+        sfx(type == I_DRAGON ? Snd.DRAGON : type == I_CLOAK ? Snd.CLOAK : type == I_DARK ? Snd.DARKWINGS : type == I_WINGS ? Snd.WINGS : Snd.PICKUP);
     }
 
     /** 生命果实 / 幸运果实：活着就能收，飞行中顺路也算（飞龙身体大，收得更宽） */
@@ -1467,7 +1649,7 @@ public final class Game {
             sfx(Snd.LIFE);
         } else {
             luck = true;
-            luckEndY = Math.min(d.y, y) - C.LUCK_DIST * 2;
+            luckLeftT = C.LUCK_T;
             luckT = 0;
             sfx(Snd.LUCK);
         }
@@ -1571,7 +1753,7 @@ public final class Game {
         Hero d = dd;
         double cy = d.y - CENTER;
         boolean dragon = d.state == DRAGON;
-        double R = dragon ? 54 : (d.state == DARKWINGS ? 34 : 30) * HS;
+        double R = dragon ? 54 : (d.state == DARKWINGS ? 34 : d.state == CLOAK ? 32 : 30) * HS;
         if (dragon) cy -= 10;
         for (int i = 0; i < monsters.size(); i++) {
             Monster m = monsters.get(i);
@@ -1668,7 +1850,7 @@ public final class Game {
         else if (a < lo) a = lo;
         double cx = Math.cos(a);
         double cy = Math.sin(a);
-        Bullet b = new Bullet();
+        Bullet b = newBullet();
         b.x = b.px = bx + cx * 28 * HS;
         b.y = b.py = by + cy * 28 * HS;
         b.vx = cx * C.BULLET_V;
@@ -1698,7 +1880,8 @@ public final class Game {
         for (int i = 0; i < 6; i++) {
             double a = rand(0, PI * 2);
             double s = rand(60, 160);
-            Spark k = new Spark();
+            Spark k = take(sparkPool);
+            if (k == null) k = new Spark();
             k.x = m.x;
             k.y = m.y;
             k.vx = Math.cos(a) * s;
@@ -1734,7 +1917,7 @@ public final class Game {
             }
             if (p.dead) p.fade += dt;
             if (p.item != null && p.item.fired) p.item.t += dt;
-            if (p.y > bottom + 80 || (p.dead && p.fade > 0.3)) platforms.remove(i);
+            if (p.y > bottom + 80 || (p.dead && p.fade > 0.3)) platPool.add(platforms.remove(i));
         }
 
         for (int i = monsters.size() - 1; i >= 0; i--) {
@@ -1822,7 +2005,7 @@ public final class Game {
                 f.life = 0.16 + rnd() * 0.1;
                 addFx(f);
             }
-            if (hit || b.life <= 0 || b.x < -20 || b.x > W + 20 || b.y < camY - (b.fire ? 320 : 60)) bullets.remove(i);
+            if (hit || b.life <= 0 || b.x < -20 || b.x > W + 20 || b.y < camY - (b.fire ? 320 : 60)) bulletPool.add(bullets.remove(i));
         }
 
         for (int i = debris.size() - 1; i >= 0; i--) {
@@ -1831,7 +2014,7 @@ public final class Game {
             q.x += q.vx * dt;
             q.y += q.vy * dt;
             q.rot += q.vr * dt;
-            if (q.y > bottom + 100) debris.remove(i);
+            if (q.y > bottom + 100) debrisPool.add(debris.remove(i));
         }
 
         // 特效：原地压缩（保持顺序），过期的放回对象池
@@ -1876,6 +2059,14 @@ public final class Game {
                         f.rot = f.rot0 + Math.sin(f.ph) * 0.7;
                         break;
                     }
+                    case Fx.INK: {
+                        double dd0 = Math.exp(-3 * dt);
+                        f.vx *= dd0;
+                        f.vy *= dd0;
+                        f.x += f.vx * dt;
+                        f.y += f.vy * dt;
+                        break;
+                    }
                     case Fx.FIRE:
                     case Fx.STREAK:
                         f.vy *= Math.exp(-1.2 * dt);
@@ -1898,7 +2089,7 @@ public final class Game {
             s.vy += 500 * dt;
             s.x += s.vx * dt;
             s.y += s.vy * dt;
-            if (s.life <= 0) sparks.remove(i);
+            if (s.life <= 0) sparkPool.add(sparks.remove(i));
         }
     }
 }

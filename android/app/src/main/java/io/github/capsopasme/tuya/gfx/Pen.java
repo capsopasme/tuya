@@ -202,6 +202,21 @@ public final class Pen {
         c.drawText(s, x, y + middle(text), text);
     }
 
+    /** char 数组版（左对齐），分数这类每帧都变的数字不用新建字符串 */
+    public void text(char[] s, int off, int len, float x, float y, float size, int argb, Typeface tf) {
+        text.setTypeface(tf);
+        text.setTextSize(size);
+        text.setTextAlign(Paint.Align.LEFT);
+        text.setColor(mul(argb, 1));
+        c.drawText(s, off, len, x, y + middle(text), text);
+    }
+
+    public float measure(char[] s, int off, int len, float size, Typeface tf) {
+        text.setTypeface(tf);
+        text.setTextSize(size);
+        return text.measureText(s, off, len);
+    }
+
     /** 带粗墨边的字（拟声字、标题） */
     public void inkText(String s, float x, float y, float size, int argb, float lw, Typeface tf) {
         textStroke.setTypeface(tf);
