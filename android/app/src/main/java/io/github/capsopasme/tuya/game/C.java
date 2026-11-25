@@ -32,6 +32,11 @@ public final class C {
     public static final double DARK_T = 5.0;
     public static final double DARK_VX = 1.35;
     public static final double DARK_SPIN = 15; // 旋转角速度（弧度/秒）
+    public static final double CLOAK_V = 2100; // 暗夜斗篷：化作一道水墨彗星飞遁，强度介于紫黑飞翼和飞龙之间（约 13000 分）
+    public static final double CLOAK_T = 6.2;
+    public static final double CLOAK_VX = 1.5; // 横向更灵活，左右摆动才能拖出好看的曲线
+    public static final double CLOAK_ACCEL = 1.35;
+    public static final double CLOAK_SHIELD_T = 2.0;
     public static final double DRAGON_V = 2350; // 变身飞龙：新的终极道具，比紫黑飞翼再快两成多、飞得久得多（约 8000 分）
     public static final double DRAGON_T = 7.7;
     public static final double DRAGON_HOVER = 0.28; // 变身后先悬停一下（巨龙从火里钻出来），再冲出去
@@ -43,7 +48,7 @@ public final class C {
     public static final double REVIVE_V = 1500; // 生命果实复活：从屏幕底下被弹回来的速度
     public static final double REVIVE_SHIELD_T = 2.6;
     public static final int MAX_LIVES = 9;
-    public static final double LUCK_T = 25; // 幸运果实：接下来这么多秒内爆率改变（正常爬升约 2500~3000 分）
+    public static final double LUCK_T = 12.5; // 幸运果实：接下来这么多秒内爆率改变（正常爬升约 1200~1500 分）
     public static final double GLIDE_T = 2.4; // 道具用完后的“慢落”：下落阶段最多持续这么久
     public static final double GLIDE_G = 0.4; // 慢落时的重力倍数
     public static final double GLIDE_FALL = 470; // 慢落时的最大下落速度
@@ -65,7 +70,8 @@ public final class C {
 
     // 畅快模式：每种道具 {出现所需分数, 每块可放道具的平台上出现的概率}
     public static final double[] CHILL_DRAGON = {3500, 0.006};
-    public static final double[] CHILL_LIFE = {600, 0.007};
+    public static final double[] CHILL_CLOAK = {3000, 0.007};
+    public static final double[] CHILL_LIFE = {1200, 0.002};
     public static final double[] CHILL_LUCK = {400, 0.008};
     public static final double[] CHILL_DARK = {2500, 0.008};
     public static final double[] CHILL_WINGS = {1500, 0.012};
@@ -73,6 +79,13 @@ public final class C {
     public static final double[] CHILL_PROP = {250, 0.04};
     public static final double[] CHILL_TRAMP = {0, 0.05};
     public static final double[] CHILL_SPRING = {0, 0.13};
+    // 越往后高级道具越难爆：概率 × 1 / (1 + (分数 - 出现分数) / LATE_HALF)，最低降到 LATE_FLOOR。
+    // 分数每多 LATE_HALF，概率就再降一档（多 1 倍 LATE_HALF 剩一半，多 3 倍剩四分之一）
+    public static final double LATE_HALF = 12000;
+    public static final double LATE_HALF_LIFE = 8000; // 生命果实降得更快
+    public static final double LATE_HALF_LUCK = 24000; // 幸运果实降得慢：后期想爆传说道具主要靠它
+    public static final double LATE_HALF_JET = 24000;
+    public static final double LATE_FLOOR = 0.2;
     public static final double CHILL_HAZARD_FROM = 2000;
     public static final double CHILL_HAZARD_GAP = 1700;
     public static final double CHILL_HAZARD_P = 0.03;

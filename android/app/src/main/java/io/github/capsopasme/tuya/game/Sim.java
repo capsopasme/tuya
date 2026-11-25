@@ -418,6 +418,43 @@ public final class Sim {
         if (!(dr.h > dark.h * 1.5)) fails.add("飞龙应该比紫黑飞翼飞得高得多");
         if (dr.g.dd.shieldKind != Hero.SHIELD_FIRE) fails.add("飞龙结束后应该是火焰护盾");
 
+        // 暗夜斗篷：介于紫黑飞翼和飞龙之间
+        Fly ck = flyHeight(I_CLOAK);
+        System.out.printf(Locale.ROOT, "暗夜斗篷飞行高度 %.0f px（约 %.0f 分）%n", ck.h, ck.h / 2);
+        if (ck.st != Hero.CLOAK) fails.add("拿到暗夜斗篷后没有进入 cloak 状态");
+        if (!(ck.h > dark.h * 1.15 && ck.h < dr.h * 0.9)) fails.add("暗夜斗篷的飞行高度应该介于紫黑飞翼和飞龙之间，实际 " + ck.h);
+        if (ck.g.dd.shieldKind != Hero.SHIELD_MOON) fails.add("暗夜斗篷结束后应该是月光护盾");
+        if (ck.g.cometN < 60) fails.add("暗夜斗篷飞行中没有记录尾迹");
+        // 尾迹的 x 不折返：横穿屏幕边缘也是连续的
+        {
+            Game gc = bare(21);
+            gc.dd.x = 300;
+            gc.dd.y = 400;
+            gc.debugGive(I_CLOAK);
+            double maxJump = 0;
+            for (int i = 0; i < 240; i++) {
+                gc.update(DT, 1);
+                int a = gc.cometNew, b = (a - 1 + Game.COMET_N) % Game.COMET_N;
+                if (gc.cometN > 1) maxJump = Math.max(maxJump, Math.abs(gc.cometXu[a] - gc.cometXu[b]));
+            }
+            if (maxJump > 20) fails.add("暗夜斗篷尾迹跨屏幕边缘时断开了：" + maxJump);
+            Monster mc = gc.makeMonster(M_BLOB, gc.dd.x, gc.dd.y - 200);
+            mc.amp = 0;
+            gc.monsters.add(mc);
+            for (int i = 0; i < 40; i++) gc.update(DT, 0);
+            if (!mc.dead) fails.add("暗夜斗篷没有撞碎路上的怪物");
+        }
+
+        // 平衡：越往后高级道具越少；生命果实很稀有
+        int[] early = rangeCounts(true, 3000, 12000), late = rangeCounts(true, 40000, 49000);
+        int advE = early[I_WINGS] + early[I_DARK] + early[I_CLOAK] + early[I_DRAGON];
+        int advL = late[I_WINGS] + late[I_DARK] + late[I_CLOAK] + late[I_DRAGON];
+        System.out.printf(Locale.ROOT, "畅快模式高级道具：3000~12000 分 %d 个，40000~49000 分 %d 个；生命果实 %d / %d；暗夜斗篷 %d%n",
+                advE, advL, early[I_LIFE], late[I_LIFE], early[I_CLOAK]);
+        if (!(advL < advE * 0.6)) fails.add("后期高级道具没有明显变少");
+        if (!(early[I_LIFE] < advE * 0.3)) fails.add("生命果实还是太多");
+        if (early[I_CLOAK] == 0) fails.add("畅快模式里没有爆出暗夜斗篷");
+
         // 变身瞬间的龙吼：屏幕里的怪物和黑洞全部炸掉
         Game g = bare(20);
         g.dd.x = 160;
@@ -497,7 +534,8 @@ public final class Sim {
 
         // 幸运果实：同样的随机序列下，生效时基础道具更少、传说道具更多
         int[] normal = itemCounts(false), lucky = itemCounts(true);
-        int legN = normal[I_WINGS] + normal[I_DARK] + normal[I_DRAGON], legL = lucky[I_WINGS] + lucky[I_DARK] + lucky[I_DRAGON];
+        int legN = normal[I_WINGS] + normal[I_DARK] + normal[I_CLOAK] + normal[I_DRAGON];
+        int legL = lucky[I_WINGS] + lucky[I_DARK] + lucky[I_CLOAK] + lucky[I_DRAGON];
         int basN = normal[I_SPRING] + normal[I_TRAMP] + normal[I_PROP], basL = lucky[I_SPRING] + lucky[I_TRAMP] + lucky[I_PROP];
         System.out.printf(Locale.ROOT, "幸运果实：传说道具 %d -> %d，基础道具 %d -> %d，飞龙 %d -> %d%n", legN, legL, basN, basL, normal[I_DRAGON], lucky[I_DRAGON]);
         if (!(legL > legN * 3)) fails.add("幸运果实没有明显提高传说道具爆率");
@@ -508,7 +546,7 @@ public final class Sim {
         g.debugGive(I_LUCK);
         if (!g.luck || Math.abs(g.luckLeft() - 1) > 1e-9) fails.add("幸运果实没有生效");
         for (int i = 0; i < (int) ((C.LUCK_T - 1) / DT); i++) hover(g);
-        if (!g.luck || g.luckLeft() > 0.06 || g.luckLeft() <= 0) fails.add("幸运果实剩余时间不对：" + g.luckLeft());
+        if (!g.luck || g.luckLeft() > 1.05 / C.LUCK_T || g.luckLeft() <= 0) fails.add("幸运果实剩余时间不对：" + g.luckLeft());
         for (int i = 0; i < (int) (1.1 / DT); i++) hover(g);
         if (g.luck) fails.add("时间到了幸运果实应当失效");
     }
@@ -525,6 +563,25 @@ public final class Sim {
             g.luck = lucky;
             g.luckLeftT = 1e9;
             while (g.scoreAtY(g.topY) < 12000) g.genRow();
+            for (Platform p : g.platforms) if (p.item != null) n[p.item.type]++;
+        }
+        return n;
+    }
+
+    /** 畅快模式下 from..to 分之间生成的道具数量（30 个种子合计） */
+    static int[] rangeCounts(boolean chill, double from, double to) {
+        int[] n = new int[16];
+        for (int seed = 1; seed <= 30; seed++) {
+            Game g = new Game(new Rng(seed * 7121));
+            g.chill = chill;
+            g.H = 560;
+            g.reset();
+            while (g.scoreAtY(g.topY) < from) {
+                g.genRow();
+                if (g.platforms.size() > 400) g.platforms.clear();
+            }
+            g.platforms.clear();
+            while (g.scoreAtY(g.topY) < to) g.genRow();
             for (Platform p : g.platforms) if (p.item != null) n[p.item.type]++;
         }
         return n;

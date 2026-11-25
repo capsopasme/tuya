@@ -420,6 +420,113 @@ final class Art {
         }
     }
 
+    // ---------- 暗夜斗篷 ----------
+    // 一件随风摆动的深靛色斗篷：兜帽、月牙扣、靛蓝内衬里的小星星、银色滚边，身边绕着三颗拖着墨尾的小彗星
+    private static final Path cloakHood = new Path(), cloakBody = new Path(), cloakLining = new Path(), cloakFold = new Path();
+    private static LinearGradient cloakGrad, cloakLiningGrad;
+    private static RadialGradient cloakAura;
+    private static final float[][] CLOAK_STARS = {{-2.6f, 2, 0.1f}, {2.4f, 6.5f, 0.45f}, {-1, 10.5f, 0.7f}, {1.8f, -3, 0.85f}};
+
+    static void cloakItem(Pen p, float x, float y, float t) {
+        Canvas c = p.c;
+        if (cloakGrad == null) {
+            cloakGrad = Grad.linear(0, -14, 0, 17, new int[]{0xff353d7a, 0xff1a1f45, 0xff0b0d1c}, new float[]{0, 0.45f, 1});
+            cloakLiningGrad = Grad.linear(0, -10, 0, 16, 0xff1c2766, 0xff4560e0);
+            cloakAura = Grad.radial(0, 0, 1, new int[]{0x8cbfe0ff, 0x402b3266, 0x002b3266}, new float[]{0.05f, 0.55f, 1});
+        }
+        float bob = (float) Math.sin(t * 2.6f + x * 0.05f) * 2.2f;
+        float cy = y - 20 + bob;
+        c.save();
+        c.translate(x, cy);
+        float pulse = 0.75f + 0.25f * (float) Math.sin(t * 3.2f);
+        Grad.place(cloakAura, 0, 2, 32, 32);
+        p.circleShader(0, 2, 32, cloakAura, pulse);
+        // 身后半圈的小彗星
+        cloakComets(p, t, false);
+
+        c.save();
+        c.rotate((float) Math.sin(t * 1.8f) * 4, 0, -14);
+        float w1 = (float) Math.sin(t * 3.1f), w2 = (float) Math.sin(t * 3.1f + 1.7f), w3 = (float) Math.sin(t * 3.1f + 3.4f);
+        Path h = cloakHood;
+        h.rewind();
+        h.moveTo(-6.5f, -11.5f);
+        h.quadTo(-7, -19.5f, 0, -20.5f);
+        h.quadTo(7, -19.5f, 6.5f, -11.5f);
+        h.close();
+        p.fill(h, 0xff20264f);
+        p.stroke(h, INK, 1.4f);
+        Path b = cloakBody;
+        b.rewind();
+        b.moveTo(-4.5f, -13);
+        b.cubicTo(-9, -12.5f, -12.5f, -9, -12.5f, -4);
+        b.cubicTo(-12.5f, 2, -15 + w1 * 0.8f, 8, -16.5f + w1 * 1.2f, 15);
+        b.quadTo(-12.5f, 12.5f + w1 * 1.5f, -8.5f, 15 + w2 * 0.8f);
+        b.quadTo(-4.5f, 17.5f + w2 * 1.2f, 0, 15.5f + w2 * 0.6f);
+        b.quadTo(4.5f, 17.5f + w3 * 1.2f, 8.5f, 15 + w3 * 0.8f);
+        b.quadTo(12.5f, 12.5f + w3 * 1.5f, 16.5f + w3 * 1.2f, 15);
+        b.cubicTo(15 + w3 * 0.8f, 8, 12.5f, 2, 12.5f, -4);
+        b.cubicTo(12.5f, -9, 9, -12.5f, 4.5f, -13);
+        b.close();
+        p.fillShader(b, cloakGrad, 1);
+        // 衣褶
+        Path f = cloakFold;
+        f.rewind();
+        f.moveTo(-9, -3);
+        f.quadTo(-11, 6, -12.5f + w1, 13.5f + w1);
+        f.moveTo(9, -3);
+        f.quadTo(11, 6, 12.5f + w3, 13.5f + w3);
+        p.stroke(f, 0x664a62e0, 1.1f);
+        // 内衬
+        Path l = cloakLining;
+        l.rewind();
+        l.moveTo(-3, -11.5f);
+        l.quadTo(-6.5f, 3, -8.5f, 15 + w2 * 0.8f);
+        l.quadTo(-4.5f, 17.5f + w2 * 1.2f, 0, 15.5f + w2 * 0.6f);
+        l.quadTo(4.5f, 17.5f + w3 * 1.2f, 8.5f, 15 + w3 * 0.8f);
+        l.quadTo(6.5f, 3, 3, -11.5f);
+        l.close();
+        p.fillShader(l, cloakLiningGrad, 1);
+        for (float[] s : CLOAK_STARS) {
+            float k = 0.5f + 0.5f * (float) Math.sin(t * 4 + s[2] * TAU);
+            p.circle(s[0], s[1], 0.6f + 0.6f * k, Pen.rgba(0xffffff, 0.45f + 0.55f * k));
+        }
+        p.stroke(l, 0xd9dcebff, 1.1f); // 银色滚边
+        p.stroke(b, INK, 1.6f);
+        // 月牙扣
+        p.circle(0, -11.5f, 4.2f, 0x66bfe0ff);
+        p.circle(0, -11.5f, 3.2f, 0xffeef6ff);
+        p.circle(1.4f, -12.4f, 2.7f, 0xff2c3266);
+        c.restore();
+
+        // 身前半圈的小彗星 + 星芒
+        cloakComets(p, t, true);
+        float tw = (float) Math.sin(t * 2.3f);
+        if (tw > 0) sparkle(p, 13, -14, 1.5f + 4 * tw * tw, Pen.rgba(0xe8f2ff, 0.4f + 0.6f * tw));
+        float tw2 = (float) Math.sin(t * 2.3f + 2.2f);
+        if (tw2 > 0) sparkle(p, -15, 9, 1.2f + 3.2f * tw2 * tw2, Pen.rgba(0xbfd4ff, 0.4f + 0.6f * tw2));
+        c.restore();
+    }
+
+    /** 绕着斗篷转的三颗小彗星（白色的头 + 一串越来越淡的墨点），front = 只画转到前面的那几颗 */
+    private static void cloakComets(Pen p, float t, boolean front) {
+        for (int i = 0; i < 3; i++) {
+            float a = t * 1.6f + i * TAU / 3;
+            boolean isFront = Math.sin(a) > 0;
+            if (isFront != front) continue;
+            float depth = 0.6f + 0.4f * (float) Math.sin(a);
+            for (int k = 5; k >= 0; k--) {
+                float ak = a - k * 0.13f;
+                float ox = (float) Math.cos(ak) * 21, oy = (float) Math.sin(ak) * 7 + 3;
+                if (k == 0) {
+                    p.circle(ox, oy, 1.9f * depth + 0.4f, Pen.rgba(0xffffff, depth));
+                    p.circle(ox, oy, 3.4f * depth, Pen.rgba(0xbfe0ff, 0.35f * depth));
+                } else {
+                    p.circle(ox, oy, (1.7f - k * 0.2f) * depth, Pen.rgba(0x11142a, (0.55f - k * 0.09f) * depth));
+                }
+            }
+        }
+    }
+
     /** 变身药剂：圆肚烧瓶里翻滚着赤红的岩浆药水，里面一只金色的竖瞳龙眼，外面一圈金色符文环和火苗 */
     static void potionItem(Pen p, float x, float y, float t) {
         Canvas c = p.c;

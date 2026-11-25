@@ -34,6 +34,7 @@ public final class Scene {
     public final View2 v = new View2();
     final Sprites sprites = new Sprites();
     public final HeroArt hero = new HeroArt(pen);
+    final CometArt comet = new CometArt(pen);
     final Hero tmpHero = new Hero();
     /** 动画时间（秒） */
     public double clock;
@@ -64,6 +65,7 @@ public final class Scene {
         Art.lifeItem(p, x, y, t);
         Art.luckItem(p, x, y, t);
         Art.potionItem(p, x, y, t);
+        Art.cloakItem(p, x, y, t);
         Art.hole(p, x, y, 28, t);
         fireball(x, y, 0, -500);
         RadialGradient g = Grad.glow(0xffffff);
@@ -173,6 +175,10 @@ public final class Scene {
             Art.potionItem(pen, x, y, t);
             return;
         }
+        if (it.type == Entities.I_CLOAK) {
+            Art.cloakItem(pen, x, y, t);
+            return;
+        }
         if (!it.fired) {
             float bob = it.type == Entities.I_PROP ? (float) Math.sin(platX * 0.05f + t * 3) * 1.2f : 0;
             pen.bmp.setAlpha(Pen.clamp255(pen.ga));
@@ -193,7 +199,7 @@ public final class Scene {
     }
 
     void doodler(Hero d, float a) {
-        if (d.state == Hero.GONE) return;
+        if (d.state == Hero.GONE || d.state == Hero.CLOAK) return;
         float x = ix(d.px, d.x, a), y = ix(d.py, d.y, a);
         heroAt(d, x, y);
         if (d.state != Hero.BLACKHOLE && d.state != Hero.ABDUCTED) {
@@ -232,6 +238,17 @@ public final class Scene {
                     p.ga = Math.min(1, al * 1.4f);
                     p.ovalStroke(fx, fy - 2, (float) f.r, (float) (f.r * f.flat), 0xff000000 | f.col, (float) f.w * (0.25f + 0.75f * al));
                     break;
+                case Fx.INK: {
+                    // 墨晕：慢慢化开、变淡，边缘一圈稍深的水渍
+                    float r = (float) f.r * (0.55f + 1.25f * (float) Math.sqrt(u));
+                    float k = (float) f.a0 * al * Math.min(1, u / 0.08f + 0.3f);
+                    p.ga = 1;
+                    RadialGradient g = Grad.glow(f.col);
+                    Grad.place(g, fx, fy, r, r);
+                    p.circleShader(fx, fy, r, g, k);
+                    p.circleStroke(fx, fy, r * 0.62f, Pen.rgba(f.col, k * 0.35f), 0.9f);
+                    break;
+                }
                 case Fx.GLOW: {
                     float r = (float) f.r * (0.6f + 0.8f * u);
                     p.ga = 1;
@@ -369,12 +386,13 @@ public final class Scene {
         float k = clamp(((float) -d.vy - 650) / 450, 0, 1);
         if (k <= 0 || d.state == Hero.DEAD) return;
         boolean dragon = d.state == Hero.DRAGON;
-        boolean dark = d.state == Hero.DARKWINGS;
+        boolean cloak = d.state == Hero.CLOAK;
+        boolean dark = d.state == Hero.DARKWINGS || cloak;
         boolean wings = dark || d.state == Hero.WINGS;
         double t = clock * (dragon ? 2600 : dark ? 2100 : wings ? 1600 : 1100);
         int n = dragon ? 19 : dark ? 13 : wings ? 11 : 7;
         float span = dragon ? 15 : wings ? 12 : 13 * HeroArt.HS;
-        int col = dragon ? 0xff5a1e : dark ? 0x8c46e6 : wings ? 0xc89628 : 0x466e6e;
+        int col = dragon ? 0xff5a1e : cloak ? 0x3a4a8c : dark ? 0x8c46e6 : wings ? 0xc89628 : 0x466e6e;
         if (dragon) y += 20;
         for (int i = 0; i < n; i++) {
             float lx = x + (i - (n - 1) / 2f) * span + (float) Math.sin(i * 12.9) * 4;
@@ -719,6 +737,12 @@ public final class Scene {
         }
         p.ga = 1;
         speedLines(d, ix(d.px, d.x, a), ix(d.py, d.y, a));
+        // 暗夜斗篷：水墨彗星的尾迹和彗星头（结束后尾迹原地淡掉）
+        double now = g.t - (1 - a) * (1.0 / 120);
+        if (CometArt.visible(g, d, now)) {
+            boolean act = d.state == Hero.CLOAK;
+            comet.draw(g, act, ix(d.px, d.x, a), ix(d.py, d.y, a) - (float) C.CENTER, (float) d.vx, (float) d.vy, now, v.W, top, bot);
+        }
         doodler(d, a);
         effects(c, g.fx, true);
         c.restore();

@@ -557,6 +557,30 @@ final class GameView extends View implements Choreographer.FrameCallback {
                 game.debugGive(Entities.I_DRAGON);
                 steps(C.DRAGON_T + 0.15);
                 break;
+            case "cloak":
+                // 披上暗夜斗篷的一瞬间（墨晕化开、月白光柱）
+                fastForward(4);
+                game.debugGive(Entities.I_CLOAK);
+                steps(0.25);
+                break;
+            case "cloak2":
+            case "cloak3": {
+                // 飞遁中左右摆动：尾迹拖出一层层的曲线（cloak3 换一种摆法）
+                fastForward(4);
+                game.debugGive(Entities.I_CLOAK);
+                boolean b3 = s.equals("cloak3");
+                for (int i = 0; i < (int) (2.2 / STEP); i++) {
+                    double tt = i * STEP;
+                    double ax = b3 ? (tt % 1.1 < 0.55 ? 1 : -1) : Math.sin(tt * 4.2);
+                    game.update(STEP, ax);
+                }
+                break;
+            }
+            case "cloak-end":
+                fastForward(4);
+                game.debugGive(Entities.I_CLOAK);
+                steps(C.CLOAK_T + 0.12);
+                break;
             case "life":
                 fastForward(4);
                 game.debugGive(Entities.I_LIFE);
@@ -584,10 +608,10 @@ final class GameView extends View implements Choreographer.FrameCallback {
                 // 三种新道具摆在眼前的平台上
                 fastForward(3);
                 double cy = game.camY;
-                int[] types = {Entities.I_LIFE, Entities.I_LUCK, Entities.I_DRAGON};
-                double[] xs = {60, 160, 260};
-                for (int i = 0; i < 3; i++) {
-                    Entities.Platform p = game.addPlatform(Entities.P_NORMAL, xs[i], cy + 150 + (i == 1 ? 60 : 0));
+                int[] types = {Entities.I_LIFE, Entities.I_LUCK, Entities.I_DRAGON, Entities.I_CLOAK};
+                double[] xs = {50, 125, 200, 275};
+                for (int i = 0; i < 4; i++) {
+                    Entities.Platform p = game.addPlatform(Entities.P_NORMAL, xs[i], cy + 150 + (i % 2 == 1 ? 60 : 0));
                     p.vx = 0;
                     p.item = new Entities.Item(types[i], 0);
                 }
