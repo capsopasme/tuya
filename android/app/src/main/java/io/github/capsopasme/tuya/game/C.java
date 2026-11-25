@@ -43,7 +43,7 @@ public final class C {
     public static final double REVIVE_V = 1500; // 生命果实复活：从屏幕底下被弹回来的速度
     public static final double REVIVE_SHIELD_T = 2.6;
     public static final int MAX_LIVES = 9;
-    public static final double LUCK_DIST = 2500; // 幸运果实：接下来这么多分的距离内爆率改变
+    public static final double LUCK_T = 25; // 幸运果实：接下来这么多秒内爆率改变（正常爬升约 2500~3000 分）
     public static final double GLIDE_T = 2.4; // 道具用完后的“慢落”：下落阶段最多持续这么久
     public static final double GLIDE_G = 0.4; // 慢落时的重力倍数
     public static final double GLIDE_FALL = 470; // 慢落时的最大下落速度

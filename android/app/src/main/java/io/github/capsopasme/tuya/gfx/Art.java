@@ -205,7 +205,7 @@ final class Art {
     }
 
     // ---------- 生命果实 / 幸运果实 / 变身药剂（悬在平台上方，一直在动） ----------
-    private static RadialGradient lifeGlow, lifeFruit, luckGlow, luckFruit, potionAura;
+    private static RadialGradient lifeGlow, lifeFruit, luckGlow, luckFruitGrad, potionAura;
     private static LinearGradient potionLiquid;
     private static final DashPathEffect DASH_POTION = new DashPathEffect(new float[]{3, 5}, 0);
 
@@ -274,44 +274,149 @@ final class Art {
         }
     }
 
-    static void luckIcon(Pen p, float x, float y, float r, float spin) {
+    // 幸运果实：一颗金灿灿的苹果形果子，顶上一片叶子 + 一棵小四叶草，脸上有腮红和高光。
+    // 形状固定（半径 LR），路径只建一次，之后每帧复用同一个 Path（GPU 那边能直接复用细分结果），调用方用画布缩放改大小。
+    static final float LR = 11;
+    private static Path luckBody, luckLeaf, luckVein, luckStem, sparkle4, luckRays;
+    private static RadialGradient luckRayGrad;
+    private static LinearGradient luckShine, luckLeafGrad;
+    private static final int[] LUCK_SPARK_COLS = {0xfffff3a8, 0xffffffff, 0xffc8ff9a, 0xffffe27a};
+    private static final float[][] LUCK_SPARKS = {{-19, -14, 0}, {18, -20, 0.27f}, {21, 7, 0.55f}, {-17, 11, 0.8f}};
+
+    private static void luckPaths() {
+        if (luckBody != null) return;
+        float r = LR;
+        Path b = new Path();
+        b.moveTo(0, -0.6f * r);
+        b.cubicTo(-0.3f * r, -0.98f * r, -1.02f * r, -0.98f * r, -1.03f * r, -0.18f * r);
+        b.cubicTo(-1.04f * r, 0.5f * r, -0.56f * r, 1.02f * r, -0.2f * r, 0.98f * r);
+        b.quadTo(0, 0.94f * r, 0.2f * r, 0.98f * r);
+        b.cubicTo(0.56f * r, 1.02f * r, 1.04f * r, 0.5f * r, 1.03f * r, -0.18f * r);
+        b.cubicTo(1.02f * r, -0.98f * r, 0.3f * r, -0.98f * r, 0, -0.6f * r);
+        b.close();
+        luckBody = b;
+        Path s = new Path();
+        s.moveTo(0, -0.58f * r);
+        s.quadTo(-0.02f * r, -0.95f * r, 0.16f * r, -1.22f * r);
+        luckStem = s;
+        Path l = new Path();
+        l.moveTo(-0.02f * r, -0.86f * r);
+        l.cubicTo(-0.3f * r, -1.38f * r, -0.86f * r, -1.42f * r, -1.12f * r, -1.18f * r);
+        l.cubicTo(-0.86f * r, -0.8f * r, -0.36f * r, -0.68f * r, -0.02f * r, -0.86f * r);
+        l.close();
+        luckLeaf = l;
+        Path v = new Path();
+        v.moveTo(-0.08f * r, -0.88f * r);
+        v.quadTo(-0.55f * r, -1.12f * r, -0.98f * r, -1.16f * r);
+        luckVein = v;
+        // 四角闪光（单位大小，画的时候缩放）
+        Path k = new Path();
+        k.moveTo(0, -1);
+        k.quadTo(0.14f, -0.14f, 1, 0);
+        k.quadTo(0.14f, 0.14f, 0, 1);
+        k.quadTo(-0.14f, 0.14f, -1, 0);
+        k.quadTo(-0.14f, -0.14f, 0, -1);
+        k.close();
+        sparkle4 = k;
+        // 身后的一圈光芒：10 根细长的楔形
+        Path ry = new Path();
+        for (int i = 0; i < 10; i++) {
+            double a = i * Math.PI * 2 / 10;
+            double w = i % 2 == 0 ? 0.13 : 0.08;
+            float R = i % 2 == 0 ? 34 : 26;
+            ry.moveTo((float) Math.cos(a - w) * 7, (float) Math.sin(a - w) * 7);
+            ry.lineTo((float) Math.cos(a) * R, (float) Math.sin(a) * R);
+            ry.lineTo((float) Math.cos(a + w) * 7, (float) Math.sin(a + w) * 7);
+            ry.close();
+        }
+        luckRays = ry;
+        luckRayGrad = Grad.radial(0, 0, 34, new int[]{0xccfff2a0, 0x66ffe27a, 0x00ffe27a}, new float[]{0.15f, 0.55f, 1});
+        luckFruitGrad = Grad.conical(-0.42f * r, -0.5f * r, 0.6f, 0, 0.05f * r, 1.12f * r,
+                new int[]{0xfffffbe6, 0xffffe066, 0xfff5a623, 0xffc8661a}, new float[]{0, 0.3f, 0.78f, 1});
+        luckLeafGrad = Grad.linear(-1.1f * r, -1.2f * r, 0, -0.8f * r, 0xff9be86a, 0xff3fa83a);
+        // 扫光：一道斜着的白色窄带（单位宽度，挪动局部矩阵扫过果子）
+        luckShine = Grad.linear(-1, 0, 1, 0, new int[]{0x00ffffff, 0xbfffffff, 0x00ffffff}, new float[]{0, 0.5f, 1});
+    }
+
+    /** 小四叶草：中心在原点，叶子半径 r */
+    static void clover(Pen p, float r) {
+        for (int i = 0; i < 4; i++) cloverLeaf(p, i * PI / 2 + PI / 4, r, i == 0 ? 0xff9be86a : 0xff5fc43a);
+        p.circle(0, 0, r * 0.32f, 0xffffe27a);
+    }
+
+    /**
+     * 幸运果实本体（中心在原点，半径 LR）。shine：扫光的位置（-1..1 扫过果子，范围外不画）；用作 HUD 贴图时传 9。
+     */
+    static void luckFruit(Pen p, float shine) {
+        luckPaths();
+        Canvas c = p.c;
+        float r = LR;
+        // 果柄、叶子
+        p.stroke(luckStem, 0xff7a4a22, 2.2f);
+        p.fillShader(luckLeaf, luckLeafGrad, 1);
+        p.stroke(luckLeaf, INK, 1.2f);
+        p.stroke(luckVein, 0x993a7a26, 0.9f);
+        // 果子
+        p.fillShader(luckBody, luckFruitGrad, 1);
+        p.ovalFill(0.42f * r, 0.36f * r, 0.26f * r, 0.17f * r, 0x59ff7a4a); // 腮红
+        p.ovalFill(-0.42f * r, 0.36f * r, 0.2f * r, 0.13f * r, 0x40ff7a4a);
+        if (shine > -1.2f && shine < 1.2f) {
+            Grad.placeRot(luckShine, shine * 1.4f * r, 0, 0.42f * r, 1, 24);
+            p.fillShader(luckBody, luckShine, 1);
+        }
+        p.stroke(luckBody, INK, 1.7f);
+        // 高光
+        c.save();
+        c.rotate(-35, -0.48f * r, -0.3f * r);
+        p.ovalFill(-0.48f * r, -0.3f * r, 0.26f * r, 0.13f * r, 0xe6ffffff);
+        c.restore();
+        p.circle(-0.18f * r, -0.5f * r, 0.07f * r, 0xccffffff);
+        // 果柄旁边的小四叶草
+        c.save();
+        c.translate(0.52f * r, -1.08f * r);
+        c.rotate(18);
+        clover(p, 0.27f * r);
+        c.restore();
+    }
+
+    /** 四角闪光，中心 (x, y)，半径 r */
+    static void sparkle(Pen p, float x, float y, float r, int argb) {
+        luckPaths();
         Canvas c = p.c;
         c.save();
         c.translate(x, y);
-        c.rotate(deg(spin));
-        for (int i = 0; i < 4; i++) cloverLeaf(p, i * PI / 2 + PI / 4, r * 0.55f, i == 0 ? 0xff8fe35a : 0xff5fc43a);
-        p.circle(0, 0, r * 0.16f, 0xffffe27a);
+        c.scale(r, r);
+        p.fill(sparkle4, argb);
         c.restore();
     }
 
     static void luckItem(Pen p, float x, float y, float t) {
+        luckPaths();
         Canvas c = p.c;
-        c.save();
         float bob = (float) Math.sin(t * 2.8f + x * 0.05f) * 2.2f;
-        c.translate(x, y - 16 + bob);
+        float cy = y - 17 + bob;
+        c.save();
+        c.translate(x, cy);
         if (luckGlow == null) luckGlow = Grad.radial(0, 0, 32, new int[]{0xccfff09a, 0x55b6f783, 0x00b6f783}, new float[]{0.05f, 0.5f, 1});
-        p.circleShader(0, 0, 32, luckGlow, 0.75f + 0.25f * (float) Math.sin(t * 4));
-        // 金色的圆果子
-        if (luckFruit == null)
-            luckFruit = Grad.conical(-3.5f, -4, 0.5f, 0, 0, 12, new int[]{0xfffffbe0, 0xffffd94a, 0xffd99414}, new float[]{0, 0.45f, 1});
-        p.circleShader(0, 2, 10.5f, luckFruit, 1);
-        p.circleStroke(0, 2, 10.5f, INK, 1.8f);
-        Path sh = p.begin();
-        p.rect.set(-7, -5, 7, 9);
-        sh.arcTo(p.rect, 200, 70, true);
-        p.stroke(sh, 0xccffffff, 1.6f);
-        // 顶上长出一棵转着的四叶草
-        p.line(0, -8, 0, -13, 0xff3d8a28, 2);
-        luckIcon(p, 0, -15, 14, (float) Math.sin(t * 2) * 0.4f);
+        p.circleShader(0, 0, 32, luckGlow, 0.7f + 0.3f * (float) Math.sin(t * 4));
+        // 慢慢转的光芒
+        c.save();
+        c.rotate(deg(t * 0.6f));
+        p.fillShader(luckRays, luckRayGrad, 0.55f + 0.25f * (float) Math.sin(t * 3));
         c.restore();
-        // 彩虹色的小星星绕着转
-        int[] cs = {0xffe27a, 0x7be0ff, 0xff8fd0, 0xb6f783};
+        // 果子轻轻摇摆，每 2.6 秒扫过一道光
+        float u = (t * 0.385f + x * 0.003f) % 1;
+        c.rotate((float) Math.sin(t * 2.2f) * 6, 0, LR);
+        luckFruit(p, u < 0.4f ? -1.2f + u / 0.4f * 2.4f : 9);
+        c.restore();
+        // 一闪一闪的四角星
         for (int i = 0; i < 4; i++) {
-            float a = -t * 1.6f + (i * TAU) / 4;
-            float k = 0.5f + 0.5f * (float) Math.sin(t * 7 + i * 1.7f);
-            Path path = p.begin();
-            Pen.star(path, x + (float) Math.cos(a) * 22, y - 16 + bob + (float) Math.sin(a) * 10, 1.8f + 2 * k);
-            p.fill(path, Pen.rgba(cs[i], 0.6f + 0.4f * k));
+            float[] s = LUCK_SPARKS[i];
+            float ph = (t * 0.9f + s[2]) % 1;
+            float k = (float) Math.sin(ph * PI);
+            k = k * k;
+            if (k < 0.04f) continue;
+            sparkle(p, x + s[0], cy + s[1], 1.5f + 3.6f * k, Pen.rgba(LUCK_SPARK_COLS[i], 0.35f + 0.65f * k));
         }
     }
 
@@ -429,13 +534,23 @@ final class Art {
         int q = Math.round((sh - 0.25f) / 0.5f * (SHEEN_N - 1));
         q = Math.max(0, Math.min(SHEEN_N - 1, q));
         LinearGradient g = darkFeather[i][q];
-        if (g == null) {
-            float s = 0.25f + 0.5f * q / (SHEEN_N - 1);
-            g = Grad.linear(0, 0, L, 0, new int[]{0xff160a24, 0xff2e1350, 0xffb98aff, 0xff4a1f86, 0xff8f4dff},
-                    new float[]{0, Math.max(0.01f, s - 0.18f), s, Math.min(0.99f, s + 0.18f), 1});
-            darkFeather[i][q] = g;
-        }
+        if (g == null) g = darkFeather[i][q] = darkSheen(L, q);
         return g;
+    }
+
+    private static LinearGradient darkSheen(float L, int q) {
+        float s = 0.25f + 0.5f * q / (SHEEN_N - 1);
+        return Grad.linear(0, 0, L, 0, new int[]{0xff160a24, 0xff2e1350, 0xffb98aff, 0xff4a1f86, 0xff8f4dff},
+                new float[]{0, Math.max(0.01f, s - 0.18f), s, Math.min(0.99f, s + 0.18f), 1});
+    }
+
+    /** 启动时把紫黑飞翼的 200 个光泽渐变、幸运果实的路径都先建好，第一次飞的时候不用临时分配 */
+    static void prewarm() {
+        for (int i = 0; i < FEATHERS.length; i++) {
+            float L = FEATHERS[i][1] * 1.1f;
+            for (int q = 0; q < SHEEN_N; q++) if (darkFeather[i][q] == null) darkFeather[i][q] = darkSheen(L, q);
+        }
+        luckPaths();
     }
 
     /** dark=true 是紫黑飞翼：飞羽更长更尖、黑紫色，内侧一圈霓虹紫描边，还有流动的虹彩光泽 */

@@ -38,6 +38,14 @@ public final class Grad {
         s.setLocalMatrix(M);
     }
 
+    /** 同 place，再绕 (x, y) 转 deg 度 */
+    public static void placeRot(Shader s, float x, float y, float sx, float sy, float deg) {
+        M.setScale(sx, sy);
+        M.postRotate(deg);
+        M.postTranslate(x, y);
+        s.setLocalMatrix(M);
+    }
+
     /** 按颜色缓存的单位径向光晕：中心不透明，边缘透明（透明度由画笔控制） */
     private static final int[] glowKeys = new int[48];
     private static final RadialGradient[] glowVals = new RadialGradient[48];

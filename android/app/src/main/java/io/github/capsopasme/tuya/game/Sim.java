@@ -116,6 +116,13 @@ public final class Sim {
         return worst;
     }
 
+    /** 让主角悬在原地走一步（只测计时类的机制） */
+    static void hover(Game g) {
+        g.dd.y = g.camY + 300;
+        g.dd.vy = -100;
+        g.update(DT, 0);
+    }
+
     static Game bare(int seed) {
         Game g = new Game(new Rng(seed));
         g.H = 560;
@@ -499,10 +506,11 @@ public final class Sim {
         g.dd.x = 160;
         g.dd.y = 400;
         g.debugGive(I_LUCK);
-        if (!g.luck || !g.luckAt(g.dd.y - 100) || g.luckAt(g.dd.y - C.LUCK_DIST * 2 - 50)) fails.add("幸运果实的生效距离不对");
-        g.dd.y -= C.LUCK_DIST * 2 + 60;
-        g.update(DT, 0);
-        if (g.luck) fails.add("走完这段距离后幸运果实应当失效");
+        if (!g.luck || Math.abs(g.luckLeft() - 1) > 1e-9) fails.add("幸运果实没有生效");
+        for (int i = 0; i < (int) ((C.LUCK_T - 1) / DT); i++) hover(g);
+        if (!g.luck || g.luckLeft() > 0.06 || g.luckLeft() <= 0) fails.add("幸运果实剩余时间不对：" + g.luckLeft());
+        for (int i = 0; i < (int) (1.1 / DT); i++) hover(g);
+        if (g.luck) fails.add("时间到了幸运果实应当失效");
     }
 
     /** 3000..12000 分之间生成的道具数量（lucky = 整段都在幸运果实生效中） */
@@ -515,7 +523,7 @@ public final class Sim {
             while (g.scoreAtY(g.topY) < 3000) g.genRow();
             g.platforms.clear();
             g.luck = lucky;
-            g.luckEndY = -1e9;
+            g.luckLeftT = 1e9;
             while (g.scoreAtY(g.topY) < 12000) g.genRow();
             for (Platform p : g.platforms) if (p.item != null) n[p.item.type]++;
         }

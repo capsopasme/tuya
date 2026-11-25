@@ -40,6 +40,52 @@ public final class Scene {
 
     public Scene() {
         hero.h3 = Hero3D.create();
+        Art.prewarm();
+    }
+
+    private int warmLeft = 2;
+
+    /**
+     * 着色器预热：菜单的头两帧，在画面中央用几乎看不见的透明度（1/255）把所有道具、飞翼、飞龙、护盾、火球、粒子贴图各画一遍，
+     * 让 GPU 提前编译好这些渐变 / 着色器组合，游戏里第一次出现时就不会卡一下。
+     */
+    public void warm(Canvas c) {
+        if (warmLeft <= 0 || v.pw == 0) return;
+        warmLeft--;
+        Pen p = pen;
+        p.c = c;
+        float ga0 = p.ga;
+        p.ga = 1.2f / 255;
+        c.save();
+        enterLogical(c);
+        float x = v.W / 2, y = v.H / 2, t = 1.3f;
+        Art.wingItem(p, false, x, y, t);
+        Art.wingItem(p, true, x, y, t);
+        Art.lifeItem(p, x, y, t);
+        Art.luckItem(p, x, y, t);
+        Art.potionItem(p, x, y, t);
+        Art.hole(p, x, y, 28, t);
+        fireball(x, y, 0, -500);
+        RadialGradient g = Grad.glow(0xffffff);
+        Grad.place(g, x, y, 30, 30);
+        p.circleShader(x, y, 30, g, 1);
+        sprites.shape(c, Sprites.SH_STAR, x, y, 1, 30, p.mul(0xffffffff, 1), p.mul(INK, 1));
+        p.bmp.setAlpha(1);
+        sprites.hudLuck(c, x, y, 0.8f, p.bmp);
+        Hero h = tmpHero;
+        boolean u3 = hero.use3d;
+        hero.use3d = false; // 3D 着色器自己的画笔不吃全局透明度，菜单里本来就一直在画，不用预热
+        int[] states = {Hero.WINGS, Hero.DARKWINGS, Hero.DRAGON, Hero.JETPACK, Hero.PROPELLER, Hero.NORMAL};
+        for (int st : states) {
+            h.fake(x, y, 1, -400, 1, t);
+            h.state = st;
+            h.stateT = 1;
+            h.shield = st == Hero.NORMAL ? 1 : 0;
+            heroAt(h, x, y);
+        }
+        hero.use3d = u3;
+        c.restore();
+        p.ga = ga0;
     }
 
     public boolean has3d() {
@@ -49,6 +95,7 @@ public final class Scene {
     public void resize(int pw, int ph) {
         v.set(pw, ph);
         sprites.rebuild(v.s);
+        layoutHud();
     }
 
     /** 进入逻辑坐标（单位）。调用方负责 save/restore */
@@ -275,36 +322,13 @@ public final class Scene {
                 case Fx.PART: {
                     float sz = (float) f.r * (0.55f + 0.45f * al);
                     p.ga = Math.min(1, al * 2.2f);
-                    if (f.shape == Fx.S_HEART || f.shape == Fx.S_LEAF || f.shape == Fx.S_SHARD) {
-                        c.save();
-                        c.translate(fx, fy);
-                        c.rotate(deg((float) f.rot));
-                        Path path = p.begin();
-                        if (f.shape == Fx.S_SHARD) {
-                            path.moveTo(0, -sz * 1.6f);
-                            path.lineTo(sz * 0.8f, sz * 0.4f);
-                            path.lineTo(-sz * 0.5f, sz * 1.1f);
-                            path.close();
-                            p.fill(path, Pen.rgba(f.col, 0.8f));
-                            p.stroke(path, 0xcc2d2d26, 1);
-                        } else if (f.shape == Fx.S_HEART) {
-                            Art.heart(path, 0, 0, sz * 1.25f);
-                            p.fillInk(path, 0xff000000 | f.col, 1.2f);
-                        } else {
-                            Art.heart(path, 0, 0, sz);
-                            path.moveTo(0, sz);
-                            path.lineTo(0, sz * 1.8f);
-                            p.fillInk(path, 0xff000000 | f.col, 1.1f);
-                        }
-                        c.restore();
-                    } else if (f.shape == Fx.S_STAR) {
-                        c.save();
-                        c.translate(fx, fy);
-                        c.rotate(deg((float) f.rot));
-                        Path path = p.begin();
-                        Pen.star(path, 0, 0, sz * 1.5f);
-                        p.fillInk(path, 0xff000000 | f.col, 1.3f);
-                        c.restore();
+                    if (f.shape == Fx.S_HEART || f.shape == Fx.S_LEAF || f.shape == Fx.S_SHARD || f.shape == Fx.S_STAR) {
+                        // 贴图粒子：一份蒙版上色 + 一份墨线，不再每个粒子细分两条路径
+                        int kind = f.shape == Fx.S_STAR ? Sprites.SH_STAR : f.shape == Fx.S_HEART ? Sprites.SH_HEART
+                                : f.shape == Fx.S_LEAF ? Sprites.SH_LEAF : Sprites.SH_SHARD;
+                        boolean shard = f.shape == Fx.S_SHARD;
+                        sprites.shape(c, kind, fx, fy, sz / Sprites.SH_R, deg((float) f.rot),
+                                p.mul(shard ? Pen.rgba(f.col, 0.8f) : 0xff000000 | f.col, 1), p.mul(shard ? 0xcc2d2d26 : INK, 1));
                     } else if (f.shape == Fx.S_FIRE) {
                         p.circle(fx, fy, sz * 1.1f, al > 0.66f ? 0xffffdf4d : al > 0.33f ? 0xffff9f2e : 0xffff6a3d);
                     } else {
@@ -361,100 +385,219 @@ public final class Scene {
     }
 
     // ---------- HUD ----------
-    private int hudScore = -1;
-    private String hudScoreS = "0";
+    // 顶栏：左边分数 → 生命 → 幸运果实，右边暂停键（和“畅快”标签）。
+    // 挖孔 / 刘海所在的水平区间、屏幕圆角都会避开；左边一排放不下的元素挪到顶栏下面的第二行。
+    static final float BAR_H = 34;
+    private static final String[] LIVES_S = new String[C.MAX_LIVES + 1];
+    private static final float[] LIVES_W = new float[C.MAX_LIVES + 1];
+
+    static {
+        for (int i = 0; i <= C.MAX_LIVES; i++) LIVES_S[i] = "× " + i;
+    }
+
+    // 屏幕挖孔（像素矩形，每 4 个一组）和左上 / 右上圆角（像素：圆心 x, 圆心 y, 半径），由 GameView 从 WindowInsets 里取
+    private float[] cutPx = new float[0];
+    private final float[] cornerPx = new float[6];
+    // 换算成逻辑单位后：顶栏里被挡住的水平区间、左右边距
+    private final float[] cutA = new float[8], cutB = new float[8];
+    private int nCut;
+    public float padL = 12, padR = 12;
+    /** 暂停键中心（逻辑 x），点击判定用 */
+    public float pauseCx = (float) C.W - 24;
+
+    public void setInsets(float[] cutoutsPx, float[] cornersPx) {
+        cutPx = cutoutsPx;
+        System.arraycopy(cornersPx, 0, cornerPx, 0, 6);
+        layoutHud();
+    }
+
+    private void layoutHud() {
+        nCut = 0;
+        for (int i = 0; i + 3 < cutPx.length && nCut < cutA.length; i += 4) {
+            float l = v.toX(cutPx[i]), t = v.toY(cutPx[i + 1]), r = v.toX(cutPx[i + 2]), b = v.toY(cutPx[i + 3]);
+            if (t >= BAR_H || b <= 0 || r <= 0 || l >= v.W) continue;
+            cutA[nCut] = l - 5;
+            cutB[nCut++] = r + 5;
+        }
+        // 圆角：内容最高到 y≈5，在这个高度上圆角边界往里收多少
+        padL = 12;
+        padR = 12;
+        float yt = 5;
+        if (cornerPx[2] > 0) {
+            float cx = v.toX(cornerPx[0]), cy = v.toY(cornerPx[1]), r = cornerPx[2] / v.s;
+            if (yt < cy) padL = Math.max(padL, cx - (float) Math.sqrt(Math.max(0, r * r - (cy - yt) * (cy - yt))) + 4);
+        }
+        if (cornerPx[5] > 0) {
+            float cx = v.toX(cornerPx[3]), cy = v.toY(cornerPx[4]), r = cornerPx[5] / v.s;
+            if (yt < cy) padR = Math.max(padR, v.W - (cx + (float) Math.sqrt(Math.max(0, r * r - (cy - yt) * (cy - yt)))) + 4);
+        }
+        padL = Math.min(padL, 40);
+        padR = Math.min(padR, 40);
+    }
+
+    /** 从 x 往右找第一个放得下宽 w、不压到挖孔的位置 */
+    private float fitRight(float x, float w) {
+        for (int pass = 0; pass < 4; pass++) {
+            boolean moved = false;
+            for (int i = 0; i < nCut; i++) {
+                if (x < cutB[i] && x + w > cutA[i]) {
+                    x = cutB[i];
+                    moved = true;
+                }
+            }
+            if (!moved) break;
+        }
+        return x;
+    }
+
+    /** 右端在 xr、宽 w：往左找第一个不压到挖孔的位置，返回左端 */
+    private float fitLeft(float xr, float w) {
+        float x = xr - w;
+        for (int pass = 0; pass < 4; pass++) {
+            boolean moved = false;
+            for (int i = 0; i < nCut; i++) {
+                if (x < cutB[i] && x + w > cutA[i]) {
+                    x = cutA[i] - w;
+                    moved = true;
+                }
+            }
+            if (!moved) break;
+        }
+        return x;
+    }
+
+    // 分数：直接写进 char 数组，不再每帧新建字符串
+    private final char[] scoreBuf = new char[12];
+    private int scoreLen = 1, hudScore = -1;
+    private float scoreW;
     private int bestShown = -1;
     private String bestS = "";
 
-    public void hud(Canvas c, int score, Game g) {
-        boolean chill = g.chill;
-        Pen p = pen;
-        float bh = 34;
-        p.rectFill(0, 0, v.W, bh, 0xa8bee1e8);
-        p.rectFill(0, bh - 1.2f, v.W, 1.2f, 0xd95f96a5);
-        if (score != hudScore) {
-            hudScore = score;
-            hudScoreS = Integer.toString(score);
-        }
-        p.text(hudScoreS, 12, bh / 2 + 1, 24, 0xff3d3d34, Paint.Align.LEFT, Pen.BOLD);
-        float hx = 12 + p.measure(hudScoreS, 24, Pen.BOLD) + 14;
-        hx = hudLives(c, g, hx, bh / 2);
-        hudLuck(c, g, hx, bh / 2);
-        if (chill) {
-            float tw = p.measure("畅快", 13, Pen.BOLD) + 12;
-            float tx = v.W - 48 - tw;
-            p.rr(tx, bh / 2 - 10, tw, 20, 10, 0xe6ffc446);
-            p.rrStroke(tx, bh / 2 - 10, tw, 20, 10, 0xcc965f14, 1.4f);
-            p.text("畅快", tx + tw / 2, bh / 2 + 1, 13, 0xff6a3f0c, Paint.Align.CENTER, Pen.BOLD);
-        }
-        float px = v.W - 24, py = bh / 2;
-        p.rr(px - 8, py - 9, 5.5f, 18, 2, 0xff3d3d34);
-        p.rr(px + 2.5f, py - 9, 5.5f, 18, 2, 0xff3d3d34);
+    private void scoreChars(int score) {
+        if (score == hudScore) return;
+        hudScore = score;
+        int n = Math.max(0, score), len = 0;
+        do {
+            scoreBuf[scoreBuf.length - 1 - len++] = (char) ('0' + n % 10);
+            n /= 10;
+        } while (n > 0 && len < scoreBuf.length);
+        System.arraycopy(scoreBuf, scoreBuf.length - len, scoreBuf, 0, len);
+        scoreLen = len;
+        scoreW = pen.measure(scoreBuf, 0, len, 24, Pen.BOLD);
     }
 
-    private String livesS = "";
-    private int livesShown = -1;
+    public void hud(Canvas c, int score, Game g) {
+        Pen p = pen;
+        float bh = BAR_H, cy = bh / 2;
+        p.rectFill(v.x0, v.y0, v.x1 - v.x0, bh - v.y0, 0xa8bee1e8);
+        p.rectFill(v.x0, bh - 1.2f, v.x1 - v.x0, 1.2f, 0xd95f96a5);
 
-    /** 生命果实：最多画 3 个小心形，再多就写 ×N；拿到 / 用掉时心形会蹦一下 */
-    float hudLives(Canvas c, Game g, float x, float cy) {
+        // 右边：暂停键，左边挨着“畅快”标签
+        float px = fitLeft(v.W - padR, 18) + 9;
+        pauseCx = px;
+        p.rr(px - 8, cy - 9, 5.5f, 18, 2, 0xff3d3d34);
+        p.rr(px + 2.5f, cy - 9, 5.5f, 18, 2, 0xff3d3d34);
+        float limit = px - 9 - 10;
+        if (g.chill) {
+            float tw = p.measure("畅快", 13, Pen.BOLD) + 12;
+            float tx = fitLeft(limit, tw);
+            p.rr(tx, cy - 10, tw, 20, 10, 0xe6ffc446);
+            p.rrStroke(tx, cy - 10, tw, 20, 10, 0xcc965f14, 1.4f);
+            p.text("畅快", tx + tw / 2, cy + 1, 13, 0xff6a3f0c, Paint.Align.CENTER, Pen.BOLD);
+            limit = tx - 10;
+        }
+
+        // 左边：分数
+        scoreChars(score);
+        float x = fitRight(padL, scoreW);
+        p.text(scoreBuf, 0, scoreLen, x, cy + 1, 24, 0xff3d3d34, Pen.BOLD);
+        x += scoreW + 12;
+
+        // 生命、幸运果实：顶栏放不下就放到第二行
+        float lw = livesW(g), kw = luckW(g);
+        boolean row2 = false;
+        float x2 = padL + 4;
+        if (lw > 0) {
+            float lx = fitRight(x, lw);
+            if (lx + lw <= limit) {
+                drawLives(c, g, lx, cy);
+                x = lx + lw + 10;
+            } else {
+                row2 = true;
+            }
+        }
+        float kx = kw > 0 ? fitRight(x, kw) : 0;
+        boolean luck2 = kw > 0 && (row2 || kx + kw > limit);
+        if (row2 || luck2) {
+            float w2 = (row2 ? lw : 0) + (luck2 ? kw : 0) + (row2 && luck2 ? 10 : 0);
+            p.rr(padL - 2, bh + 3, w2 + 12, 26, 13, 0x8cbee1e8);
+            float cy2 = bh + 16;
+            if (row2) {
+                drawLives(c, g, x2, cy2);
+                x2 += lw + 10;
+            }
+            if (luck2) drawLuck(c, g, x2, cy2);
+        }
+        if (kw > 0 && !luck2) drawLuck(c, g, kx, cy);
+    }
+
+    private float livesW(Game g) {
+        int n = g.lives;
+        if (n <= 0) return g.reviveT < 0.6 ? 20 : 0;
+        if (LIVES_W[n] == 0) LIVES_W[n] = pen.measure(LIVES_S[n], 16, Pen.BOLD);
+        return 19 + LIVES_W[n];
+    }
+
+    /** 生命：小心形 + “× N”；拿到 / 用掉时心形蹦一下，用掉最后一次时心形碎掉淡出 */
+    private void drawLives(Canvas c, Game g, float x, float cy) {
         Pen p = pen;
         int n = g.lives;
+        if (n <= 0) {
+            float u = (float) g.reviveT / 0.6f;
+            p.bmp.setAlpha(Pen.clamp255(1 - u));
+            sprites.hudHeart(c, x + 9, cy + 1 - u * 12, 1 + u, p.bmp);
+            return;
+        }
         float pop = (float) Math.min(g.lifeT, g.reviveT);
         float k = pop < 0.35f ? 1 + 0.5f * (float) Math.sin(pop / 0.35f * Math.PI) : 1;
-        if (n <= 0) {
-            // 刚用掉最后一次：一颗心碎掉淡出
-            if (g.reviveT < 0.6) {
-                p.ga = 1 - (float) g.reviveT / 0.6f;
-                c.save();
-                c.translate(x + 8, cy - (float) g.reviveT * 20);
-                c.scale(1 + (float) g.reviveT, 1 + (float) g.reviveT);
-                Art.lifeIcon(p, 0, 0, 7.5f);
-                c.restore();
-                p.ga = 1;
-                return x + 22;
-            }
-            return x;
-        }
-        int show = Math.min(n, 3);
-        for (int i = 0; i < show; i++) {
-            float s = i == show - 1 ? k : 1;
-            c.save();
-            c.translate(x + 8 + i * 18, cy + 1);
-            c.scale(s, s);
-            Art.lifeIcon(p, 0, 0, 7.5f);
-            c.restore();
-        }
-        x += show * 18 + 2;
-        if (n > 3) {
-            if (n != livesShown) {
-                livesShown = n;
-                livesS = "×" + n;
-            }
-            p.text(livesS, x, cy + 1, 15, 0xffd8385e, Paint.Align.LEFT, Pen.BOLD);
-            x += p.measure(livesS, 15, Pen.BOLD) + 4;
-        }
-        return x + 6;
+        p.bmp.setAlpha(255);
+        sprites.hudHeart(c, x + 8, cy + 1, k, p.bmp);
+        p.text(LIVES_S[n], x + 19, cy + 1, 16, 0xffd8385e, Paint.Align.LEFT, Pen.BOLD);
     }
 
-    /** 幸运果实：转着的四叶草 + 剩余距离的进度条 */
-    void hudLuck(Canvas c, Game g, float x, float cy) {
+    private static final float LUCK_HUD_K = 0.8f;
+
+    private float luckW(Game g) {
+        if (g.luck) return 24;
+        return g.luckT < 0.45 ? 24 : 0;
+    }
+
+    /** 幸运果实：果子随剩余时间慢慢变淡，最后 3 秒越闪越快；时间到了放大一下消失 */
+    private void drawLuck(Canvas c, Game g, float x, float cy) {
         Pen p = pen;
-        float left = (float) g.luckLeft();
-        float fade = g.luck ? 1 : Math.max(0, 1 - (float) g.luckT / 0.4f);
-        if (fade <= 0) return;
-        p.ga = fade;
-        float pop = (float) g.luckT;
-        float k = g.luck && pop < 0.4f ? 1 + 0.6f * (float) Math.sin(pop / 0.4f * Math.PI) : 1;
-        c.save();
-        c.translate(x + 9, cy + 1);
-        c.scale(k, k);
-        Art.luckIcon(p, 0, 0, 17, (float) clock * 1.5f);
-        c.restore();
-        float bw = 40, bx = x + 21;
-        p.rr(bx, cy - 3, bw, 6, 3, 0x66ffffff);
-        if (left > 0) p.rr(bx, cy - 3, Math.max(6, bw * left), 6, 3, left < 0.2f && ((int) (clock * 6)) % 2 == 0 ? 0xffffe27a : 0xff5fc43a);
-        p.rrStroke(bx, cy - 3, bw, 6, 3, 0xcc3d6a28, 1.2f);
-        p.ga = 1;
+        float cx = x + 12, y = cy + 2.5f;
+        float a, k = 1;
+        if (g.luck) {
+            float left = (float) g.luckLeftT, T = (float) C.LUCK_T;
+            if (left > 3) {
+                a = 0.45f + 0.55f * clamp((left - 3) / (T - 3), 0, 1);
+            } else {
+                // 闪烁频率从 2Hz 加快到 6Hz：相位是频率对时间的积分
+                float L = Math.max(0, left);
+                float ph = 6 * (3 - L) - (2f / 3) * (9 - L * L);
+                float b = 0.5f + 0.5f * (float) Math.cos(ph * TAU);
+                a = 0.06f + 0.6f * b;
+                k = 1 + 0.08f * b;
+            }
+            float pop = (float) g.luckT;
+            if (pop < 0.4f) k *= 1 + 0.55f * (float) Math.sin(pop / 0.4f * Math.PI);
+        } else {
+            float u = (float) g.luckT / 0.45f;
+            a = 0.5f * (1 - u);
+            k = 1 + 0.7f * u;
+        }
+        p.bmp.setAlpha(Pen.clamp255(a));
+        sprites.hudLuck(c, cx, y, LUCK_HUD_K * k, p.bmp);
     }
 
     /** 龙息火球：外焰 + 内焰 + 白芯，拖着一道火痕 */
@@ -572,9 +715,7 @@ public final class Scene {
         for (int i = 0, n = g.sparks.size(); i < n; i++) {
             Spark s = g.sparks.get(i);
             p.ga = clamp((float) (s.life / s.max), 0, 1);
-            Path path = p.begin();
-            Pen.star(path, (float) s.x, (float) s.y, 6);
-            p.fillInk(path, 0xffffd93b, 1.2f);
+            sprites.shape(c, Sprites.SH_STAR, (float) s.x, (float) s.y, 4 / Sprites.SH_R, 0, p.mul(0xffffd93b, 1), p.mul(INK, 1));
         }
         p.ga = 1;
         speedLines(d, ix(d.px, d.x, a), ix(d.py, d.y, a));
@@ -603,7 +744,8 @@ public final class Scene {
         }
         float tw = 0;
         for (int i = 0; i < n; i++) tw = Math.max(tw, p.measure(perfLines[i], 11, Pen.NORMAL));
-        p.rr(6, 38, tw + 10, 4 + 14 * n, 5, 0x9e28281e);
-        for (int i = 0; i < n; i++) p.text(perfLines[i], 11, 41 + 14 * i + 7, 11, 0xffffffff, Paint.Align.LEFT, Pen.NORMAL);
+        // 放在顶栏第二行（生命 / 幸运果实挤下来时用）下面
+        p.rr(6, 70, tw + 10, 4 + 14 * n, 5, 0x9e28281e);
+        for (int i = 0; i < n; i++) p.text(perfLines[i], 11, 73 + 14 * i + 7, 11, 0xffffffff, Paint.Align.LEFT, Pen.NORMAL);
     }
 }

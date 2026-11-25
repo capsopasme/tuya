@@ -246,6 +246,8 @@ public final class HeroArt {
         }
     }
 
+    private static final int[] DARK_COMET = {0xc77dff, 0xff6eeb, 0x7df0ff};
+
     /** 紫黑飞翼：三颗拖着尾巴的小彗星绕着旋转的小海星转 */
     void darkFront(Hero d, Geom g) {
         Canvas c = p.c;
@@ -254,7 +256,7 @@ public final class HeroArt {
         c.save();
         c.translate(0, g.by);
         c.rotate(deg(-0.35f));
-        int[] cols = {0xc77dff, 0xff6eeb, 0x7df0ff};
+        int[] cols = DARK_COMET;
         for (int i = 0; i < 3; i++) {
             float a0 = t * 6.5f + (i * TAU) / 3;
             float depth = (float) Math.sin(a0);
